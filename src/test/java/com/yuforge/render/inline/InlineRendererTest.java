@@ -4,6 +4,7 @@ import com.yuforge.hitl.ApprovalRequest;
 import com.yuforge.hitl.ApprovalResult;
 import com.yuforge.llm.LlmClient;
 import com.yuforge.render.StatusInfo;
+import com.yuforge.render.ReasoningDisplayPolicy;
 import org.jline.reader.LineReader;
 import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
@@ -73,6 +74,27 @@ class InlineRendererTest {
     }
 
     @Test
+    void rawReasoningIsHiddenInInlineModeByDefault() {
+        String previous = System.getProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY);
+        System.setProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY, "false");
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+
+        InlineRenderer renderer = new InlineRenderer(terminal);
+        try {
+            assertFalse(renderer.rendersReasoning());
+        } finally {
+            renderer.close();
+            if (previous == null) {
+                System.clearProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY);
+            } else {
+                System.setProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY, previous);
+            }
+        }
+    }
+
+    @Test
     void streamUsesPrintAboveWhenLineReaderIsReading() {
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");
@@ -88,7 +110,7 @@ class InlineRendererTest {
             renderer.beginTurn();
             renderer.stream().println("异步通知");
 
-            Mockito.verify(lineReader).printAbove("异步通知\n");
+            Mockito.verify(lineReader).printAbove("异步通知" + System.lineSeparator());
             assertFalse(sink.toString(StandardCharsets.UTF_8).contains("异步通知"));
         } finally {
             renderer.close();
@@ -114,13 +136,41 @@ class InlineRendererTest {
             renderer.stream().println("└─ end");
 
             ArgumentCaptor<String> output = ArgumentCaptor.forClass(String.class);
-            Mockito.verify(lineReader).printAbove(output.capture());
-            String rendered = output.getValue();
+            Mockito.verify(lineReader, Mockito.times(2)).printAbove(output.capture());
+            List<String> renderedEvents = output.getAllValues();
+            String pending = renderedEvents.get(0);
+            String rendered = renderedEvents.get(1);
+            assertTrue(pending.contains("generating code: bash"), pending);
             assertTrue(rendered.contains("⏵"), rendered);
             assertTrue(rendered.contains("code: bash"), rendered);
             assertTrue(rendered.contains("1 行"), rendered);
             assertFalse(rendered.contains("echo hi"), rendered);
             assertFalse(sink.toString(StandardCharsets.UTF_8).contains("echo hi"));
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
+    void streamedCodeBlockNeverRewindsOrClearsExistingTranscriptRows() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.beginTurn();
+            renderer.stream().println("before code");
+            renderer.stream().println("┌─ code: bash");
+            renderer.stream().println("    echo hi");
+            renderer.stream().println("└─ end");
+
+            String emitted = sink.toString(StandardCharsets.UTF_8);
+            assertTrue(emitted.contains("generating code: bash"), emitted);
+            assertTrue(emitted.contains("⏵ code: bash (1 行"), emitted);
+            assertFalse(emitted.contains(AnsiSeq.moveUp(1)), emitted);
+            assertFalse(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
         } finally {
             renderer.close();
         }
@@ -150,6 +200,7 @@ class InlineRendererTest {
             String emitted = sink.toString(StandardCharsets.UTF_8);
             assertEquals("* ", renderer.inputPrompt());
             assertTrue(renderer.inputRightPrompt().contains("@path"));
+            assertTrue(renderer.inputRightPrompt().contains("Esc clear"));
             assertFalse(emitted.contains("[39;1H"), "LineReader should own the input row: " + emitted);
             assertFalse(emitted.contains("[37;1H"), "renderer should not force transcript cursor rows: " + emitted);
         } finally {

@@ -160,35 +160,38 @@ public final class BottomStatusBar implements AutoCloseable {
     }
 
     static String formatStatusLine(StatusInfo info, int cols) {
-        String mode = info.hitlEnabled() ? "HITL Ctrl+Y for YOLO" : "YOLO Ctrl+Y to enable HITL";
-        String right = environmentSummary(info);
+        String mode = topMode(info, cols);
+        String right = cols >= 70 ? environmentSummary(info) : "";
         if (right.isBlank()) {
             return fitToColumns(" " + mode, cols);
         }
-        int gap = Math.max(1, cols - visibleLength(mode) - visibleLength(right) - 2);
+        int gap = Math.max(1, cols - columnLength(mode) - columnLength(right) - 2);
         return fitToColumns(" " + mode + " ".repeat(gap) + right + " ", cols);
     }
 
     static String formatFooterLine(StatusInfo info, int cols) {
-        String model = info.model() == null || info.model().isBlank() ? "Auto Model" : info.model().trim();
-        String phase = info.phase() == null || info.phase().isBlank() ? "idle" : info.phase().trim();
+        FooterLayout layout = FooterLayout.forColumns(cols);
+        String model = compact(info.model(), layout.modelLimit(), "Auto Model");
+        String phase = compact(info.phase(), layout.phaseLimit(), "idle");
         StringBuilder sb = new StringBuilder(" Auto Model · ");
         sb.append(model);
         appendField(sb, phase);
-        appendField(sb, contextSegment(info));
-        if (info.inputTokens() > 0 || info.outputTokens() > 0 || info.cachedInputTokens() > 0) {
+        appendField(sb, contextSegment(info, layout));
+        if (layout.showUsage() && (info.inputTokens() > 0 || info.outputTokens() > 0 || info.cachedInputTokens() > 0)) {
             appendField(sb, "in " + formatTokens(info.inputTokens()) + " out " + formatTokens(info.outputTokens()));
             if (info.cachedInputTokens() > 0) {
                 sb.append(" cache ").append(formatTokens(info.cachedInputTokens()));
             }
-            if (info.estimatedCost() != null && !info.estimatedCost().isBlank()) {
+            if (layout.showCost() && info.estimatedCost() != null && !info.estimatedCost().isBlank()) {
                 sb.append(" · ").append(info.estimatedCost().trim());
             }
         }
-        if (info.elapsedMillis() > 0) {
+        if (layout.showElapsed() && info.elapsedMillis() > 0) {
             appendField(sb, formatElapsed(info.elapsedMillis()));
         }
-        appendField(sb, compactCwd());
+        if (layout.showCwd()) {
+            appendField(sb, compactCwd());
+        }
         return fitToColumns(sb.toString(), cols);
     }
 
@@ -223,13 +226,13 @@ public final class BottomStatusBar implements AutoCloseable {
     }
 
     static AttributedString formatStatusLineAttributed(StatusInfo info, int cols) {
-        String mode = info.hitlEnabled() ? "HITL Ctrl+Y for YOLO" : "YOLO Ctrl+Y to enable HITL";
-        String right = environmentSummary(info);
+        String mode = topMode(info, cols);
+        String right = cols >= 70 ? environmentSummary(info) : "";
         AttributedStringBuilder builder = new AttributedStringBuilder(Math.max(0, cols));
         builder.append(" ", BASE_STYLE);
         builder.append(mode, info.hitlEnabled() ? MODE_HITL_STYLE : MODE_YOLO_STYLE);
         if (!right.isBlank()) {
-            int gap = Math.max(1, cols - visibleLength(mode) - visibleLength(right) - 2);
+            int gap = Math.max(1, cols - columnLength(mode) - columnLength(right) - 2);
             builder.append(" ".repeat(gap), BASE_STYLE);
             appendEnvironmentSummaryStyled(builder, info);
             builder.append(" ", BASE_STYLE);
@@ -238,26 +241,29 @@ public final class BottomStatusBar implements AutoCloseable {
     }
 
     static AttributedString formatFooterLineAttributed(StatusInfo info, int cols) {
-        String model = info.model() == null || info.model().isBlank() ? "Auto Model" : info.model().trim();
-        String phase = info.phase() == null || info.phase().isBlank() ? "idle" : info.phase().trim();
+        FooterLayout layout = FooterLayout.forColumns(cols);
+        String model = compact(info.model(), layout.modelLimit(), "Auto Model");
+        String phase = compact(info.phase(), layout.phaseLimit(), "idle");
         AttributedStringBuilder builder = new AttributedStringBuilder(Math.max(0, cols));
         builder.append(" ", BASE_STYLE);
         builder.append("Auto Model", BRAND_STYLE);
         builder.append(" · ", BASE_STYLE);
         builder.append(model, MODEL_STYLE);
         appendStyledField(builder, phase, "idle".equalsIgnoreCase(phase) ? PHASE_IDLE_STYLE : PHASE_ACTIVE_STYLE);
-        appendContextField(builder, info);
-        if (info.inputTokens() > 0 || info.outputTokens() > 0 || info.cachedInputTokens() > 0) {
+        appendContextField(builder, info, layout);
+        if (layout.showUsage() && (info.inputTokens() > 0 || info.outputTokens() > 0 || info.cachedInputTokens() > 0)) {
             appendUsageField(builder, info);
-            if (info.estimatedCost() != null && !info.estimatedCost().isBlank()) {
+            if (layout.showCost() && info.estimatedCost() != null && !info.estimatedCost().isBlank()) {
                 builder.append(" · ", BASE_STYLE);
                 builder.append(info.estimatedCost().trim(), TOKEN_LABEL_STYLE);
             }
         }
-        if (info.elapsedMillis() > 0) {
+        if (layout.showElapsed() && info.elapsedMillis() > 0) {
             appendStyledField(builder, formatElapsed(info.elapsedMillis()), ELAPSED_STYLE);
         }
-        appendStyledField(builder, compactCwd(), CWD_STYLE);
+        if (layout.showCwd()) {
+            appendStyledField(builder, compactCwd(), CWD_STYLE);
+        }
         return fitToColumns(builder.toAttributedString(), cols);
     }
 
@@ -269,11 +275,12 @@ public final class BottomStatusBar implements AutoCloseable {
         if (cols <= 0) {
             return "";
         }
-        String safe = text == null ? "" : text;
-        if (safe.length() > cols) {
-            return safe.substring(0, cols);
+        AttributedString attributed = new AttributedString(text == null ? "" : text);
+        int width = attributed.columnLength();
+        if (width > cols) {
+            return attributed.columnSubSequence(0, cols).toString();
         }
-        return safe + " ".repeat(cols - safe.length());
+        return attributed + " ".repeat(cols - width);
     }
 
     private static String environmentSummary(StatusInfo info) {
@@ -327,20 +334,24 @@ public final class BottomStatusBar implements AutoCloseable {
         builder.append(value.trim(), style);
     }
 
-    private static void appendContextField(AttributedStringBuilder builder, StatusInfo info) {
+    private static void appendContextField(AttributedStringBuilder builder, StatusInfo info, FooterLayout layout) {
         ContextGauge gauge = contextGauge(info);
         builder.append("  ", BASE_STYLE);
         builder.append("ctx", CTX_LABEL_STYLE);
         builder.append(" ", BASE_STYLE);
-        if (gauge.filled() > 0) {
-            builder.append("█".repeat(gauge.filled()), CTX_FILL_STYLE);
+        if (layout.showContextBar()) {
+            if (gauge.filled() > 0) {
+                builder.append("█".repeat(gauge.filled()), CTX_FILL_STYLE);
+            }
+            if (gauge.empty() > 0) {
+                builder.append("░".repeat(gauge.empty()), CTX_EMPTY_STYLE);
+            }
+            builder.append(" ", BASE_STYLE);
         }
-        if (gauge.empty() > 0) {
-            builder.append("░".repeat(gauge.empty()), CTX_EMPTY_STYLE);
-        }
-        builder.append(" ", BASE_STYLE);
         builder.append(gauge.percent() + "%", contextPercentStyle(gauge.percent()));
-        builder.append(" (" + formatTokens(gauge.total()) + "/" + formatTokens(gauge.window()) + ")", BASE_STYLE);
+        if (layout.showContextTotals()) {
+            builder.append(" (" + formatTokens(gauge.total()) + "/" + formatTokens(gauge.window()) + ")", BASE_STYLE);
+        }
     }
 
     private static void appendUsageField(AttributedStringBuilder builder, StatusInfo info) {
@@ -388,12 +399,14 @@ public final class BottomStatusBar implements AutoCloseable {
         return builder.toAttributedString();
     }
 
-    private static String contextSegment(StatusInfo info) {
+    private static String contextSegment(StatusInfo info, FooterLayout layout) {
         ContextGauge gauge = contextGauge(info);
-        String bar = "█".repeat(Math.max(0, gauge.filled()))
-                + "░".repeat(Math.max(0, gauge.empty()));
-        return "ctx " + bar + " " + gauge.percent() + "% ("
-                + formatTokens(gauge.total()) + "/" + formatTokens(gauge.window()) + ")";
+        String bar = layout.showContextBar()
+                ? " " + "█".repeat(Math.max(0, gauge.filled())) + "░".repeat(Math.max(0, gauge.empty()))
+                : "";
+        String totals = layout.showContextTotals()
+                ? " (" + formatTokens(gauge.total()) + "/" + formatTokens(gauge.window()) + ")" : "";
+        return "ctx" + bar + " " + gauge.percent() + "%" + totals;
     }
 
     private static ContextGauge contextGauge(StatusInfo info) {
@@ -409,6 +422,23 @@ public final class BottomStatusBar implements AutoCloseable {
     private record ContextGauge(long total, long window, int percent, int filled, int empty) {
     }
 
+    private record FooterLayout(boolean showContextBar, boolean showContextTotals, boolean showUsage,
+                                boolean showCost, boolean showElapsed, boolean showCwd,
+                                int modelLimit, int phaseLimit) {
+        static FooterLayout forColumns(int cols) {
+            if (cols >= 140) {
+                return new FooterLayout(true, true, true, true, true, true, 36, 18);
+            }
+            if (cols >= 100) {
+                return new FooterLayout(true, true, true, false, true, false, 28, 16);
+            }
+            if (cols >= 70) {
+                return new FooterLayout(true, true, false, false, true, false, 22, 14);
+            }
+            return new FooterLayout(false, false, false, false, false, false, 14, 10);
+        }
+    }
+
     private static String compactCwd() {
         String cwd = System.getProperty("user.dir");
         if (cwd == null || cwd.isBlank()) {
@@ -422,8 +452,24 @@ public final class BottomStatusBar implements AutoCloseable {
         return normalized;
     }
 
-    private static int visibleLength(String text) {
-        return text == null ? 0 : text.length();
+    private static String topMode(StatusInfo info, int cols) {
+        if (cols < 70) {
+            return info.hitlEnabled() ? "HITL" : "YOLO";
+        }
+        return info.hitlEnabled() ? "HITL Ctrl+Y for YOLO" : "YOLO Ctrl+Y to enable HITL";
+    }
+
+    private static String compact(String value, int limit, String fallback) {
+        String normalized = value == null || value.isBlank() ? fallback : value.trim();
+        AttributedString attributed = new AttributedString(normalized);
+        if (attributed.columnLength() <= limit) {
+            return normalized;
+        }
+        return attributed.columnSubSequence(0, Math.max(1, limit - 1)).toString() + "…";
+    }
+
+    private static int columnLength(String text) {
+        return new AttributedString(text == null ? "" : text).columnLength();
     }
 
     private static String formatTokens(long t) {

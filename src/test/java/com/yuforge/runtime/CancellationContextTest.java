@@ -8,6 +8,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class CancellationContextTest {
 
@@ -31,5 +32,18 @@ class CancellationContextTest {
             CancellationContext.clear(token);
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void cancellationInvokesRegisteredCallbacksOnlyOnce() {
+        CancellationToken token = new CancellationToken();
+        java.util.concurrent.atomic.AtomicInteger callbacks = new java.util.concurrent.atomic.AtomicInteger();
+        token.onCancel(callbacks::incrementAndGet);
+
+        token.cancel();
+        token.cancel();
+
+        assertTrue(token.isCancelled());
+        assertEquals(1, callbacks.get());
     }
 }

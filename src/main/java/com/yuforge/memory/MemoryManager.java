@@ -25,6 +25,7 @@ public class MemoryManager {
     private TokenBudget tokenBudget;
     private ContextProfile contextProfile;
     private String currentProject;
+    private volatile MemoryRetrievalTrace lastRetrievalTrace = MemoryRetrievalTrace.empty();
 
     public MemoryManager(LlmClient llmClient) {
         this(llmClient, ContextProfile.from(llmClient), null);
@@ -153,7 +154,7 @@ public class MemoryManager {
     }
 
     public List<MemoryEntry> listLongTerm() {
-        return longTermMemory.getAll();
+        return longTermMemory.getAll(currentProject);
     }
 
     public List<MemoryEntry> searchLongTerm(String query, int limit) {
@@ -161,14 +162,22 @@ public class MemoryManager {
     }
 
     public boolean deleteLongTerm(String id) {
-        return longTermMemory.delete(id);
+        return longTermMemory.retrieve(id)
+                .filter(entry -> LongTermMemory.isVisibleInProject(entry, currentProject))
+                .map(entry -> longTermMemory.delete(id))
+                .orElse(false);
     }
 
     /**
      * 构建用于 LLM 的记忆上下文
      */
     public String buildContextForQuery(String query, int maxTokens) {
-        return retriever.buildContextForQuery(query, maxTokens, currentProject);
+        MemoryRetriever.MemoryContextResult result = retriever.buildContextForQueryWithTrace(query, maxTokens, currentProject);
+        lastRetrievalTrace = result.trace();
+        log.info("Long-term memory retrieval: queryTokens={}, eligible={}, injected={}, omittedByBudget={}",
+                result.trace().queryTokenCount(), result.trace().eligibleCount(),
+                result.trace().injected().size(), result.trace().omittedByBudget().size());
+        return result.context();
     }
 
     /**
@@ -215,6 +224,14 @@ public class MemoryManager {
      * 清空长期记忆
      */
     public void clearLongTerm() {
+        longTermMemory.clearProject(currentProject);
+    }
+
+    public void clearGlobalLongTerm() {
+        longTermMemory.clearGlobal();
+    }
+
+    public void clearAllLongTerm() {
         longTermMemory.clear();
     }
 
@@ -225,7 +242,8 @@ public class MemoryManager {
         return "上下文策略: " + contextProfile.summary() + "\n" +
                 shortTermMemory.getStatusSummary() + "\n" +
                 longTermMemory.getStatusSummary() + "\n" +
-                tokenBudget.getUsageReport();
+                tokenBudget.getUsageReport() + "\n" +
+                lastRetrievalTrace.formatForStatus();
     }
 
     // Getter
@@ -233,6 +251,7 @@ public class MemoryManager {
     public LongTermMemory getLongTermMemory() { return longTermMemory; }
     public TokenBudget getTokenBudget() { return tokenBudget; }
     public ContextProfile getContextProfile() { return contextProfile; }
+    public MemoryRetrievalTrace getLastRetrievalTrace() { return lastRetrievalTrace; }
 
     public String getCurrentProject() { return currentProject; }
 

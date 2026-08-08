@@ -8,10 +8,13 @@ import com.yuforge.lsp.LspDiagnosticReport;
 import com.yuforge.memory.ConversationHistoryCompactor;
 import com.yuforge.memory.ExplicitMemoryHints;
 import com.yuforge.memory.MemoryManager;
+import com.yuforge.memory.SessionCheckpointStore;
+import com.yuforge.memory.TokenBudget;
 import com.yuforge.prompt.PromptAssembler;
 import com.yuforge.prompt.PromptContext;
 import com.yuforge.prompt.PromptMode;
 import com.yuforge.prompt.ProjectMemoryLoader;
+import com.yuforge.prompt.RuntimeContextFormatter;
 import com.yuforge.render.PlainRenderer;
 import com.yuforge.render.Renderer;
 import com.yuforge.render.StatusInfo;
@@ -56,6 +59,9 @@ public class Agent {
     private Supplier<Boolean> hitlEnabledSupplier = () -> false;
     private boolean returnFinalResponseWhenStreamed;
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
+    private final RuntimeContextFormatter runtimeContextFormatter = RuntimeContextFormatter.systemDefault();
+    private SessionCheckpointStore sessionCheckpointStore = new SessionCheckpointStore();
+    private long turnSequence;
 
     public Agent(LlmClient llmClient) {
         this(llmClient, new ToolRegistry());
@@ -66,12 +72,13 @@ public class Agent {
         this.toolRegistry = toolRegistry;
         this.conversationHistory = new ArrayList<>();
         this.memoryManager = new MemoryManager(llmClient);
-        this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+        this.historyCompactor = new ConversationHistoryCompactor(
+                llmClient, toolRegistry.getToolResultArtifactStore());
         this.toolRegistry.setContextProfile(memoryManager.getContextProfile());
         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
         this.memoryManager.setProjectPath(this.toolRegistry.getProjectPath());
         this.toolRegistry.setScopedMemorySaver(memoryManager::storeFact);
-        conversationHistory.add(LlmClient.Message.system(buildSystemPrompt("")));
+        conversationHistory.add(LlmClient.Message.system(buildSystemPrompt()));
     }
 
     public void setLlmClient(LlmClient llmClient) {
@@ -126,18 +133,24 @@ public class Agent {
      */
     public String run(String userInput) {
         log.info("ReAct run started: inputLength={}", userInput == null ? 0 : userInput.length());
+        toolRegistry.setMemoryWriteAuthorization(userInput);
         pruneHistoricalImagePayloads();
         // 存入短期记忆
         memoryManager.addUserMessage(userInput);
         storeExplicitBrowserMemoryHint(userInput);
 
-        // 检索相关长期记忆，注入到 system prompt
+        // 检索相关记忆。动态内容必须追加到本轮尾部，不能重写 system 前缀，否则会破坏 prompt cache。
         ContextProfile contextProfile = memoryManager.getContextProfile();
         String memoryContext = memoryManager.buildContextForQuery(userInput, contextProfile.memoryContextTokens());
-        updateSystemPromptWithMemory(memoryContext);
 
-        // 添加用户输入到历史（如有 skill body 注入，前置到原文之前）
-        String userMessageContent = prependSkillBodies(userInput);
+        // 运行期状态、相关记忆和 MCP resource 索引只进入当前 user turn，保持 system 前缀稳定。
+        long turnId = ++turnSequence;
+        String userMessageContent = runtimeContextFormatter.prepend(
+                prependSkillBodies(userInput),
+                Path.of(toolRegistry.getProjectPath()),
+                toolRegistry.getCommandShell(),
+                "turn_id: " + turnId + "\nphase: running",
+                buildTurnDynamicContext(memoryContext));
         conversationHistory.add(ImageReferenceParser.userMessage(
                 userMessageContent,
                 Path.of(toolRegistry.getProjectPath())));
@@ -146,6 +159,7 @@ public class Agent {
 
         long startNanos = System.nanoTime();
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
+        ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
         pushStatus(budget, startNanos, "running");
 
         // 主退出条件 = LLM 自己决定（不再调用工具就返回）；
@@ -216,7 +230,8 @@ public class Agent {
                     List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls(), iteration);
                     for (ToolExecutionResult toolResult : toolResults) {
                         memoryManager.addToolResult(toolResult.name(), toolResult.result());
-                        conversationHistory.add(LlmClient.Message.tool(toolResult.id(), toolResult.result()));
+                        ToolAttemptTracker.Observation observation = attemptTracker.observe(toolResult);
+                        conversationHistory.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
                     }
                     appendImageToolMessages(toolResults);
                     pushStatus(budget, startNanos, "running");
@@ -264,10 +279,13 @@ public class Agent {
      */
     public void clearHistory() {
         conversationHistory.clear();
-        conversationHistory.add(LlmClient.Message.system(buildSystemPrompt("")));
+        toolRegistry.clearTodoList();
+        toolRegistry.clearConversationArtifacts();
+        conversationHistory.add(LlmClient.Message.system(buildSystemPrompt()));
 
         // 清空短期记忆
         memoryManager.clearShortTerm();
+        toolRegistry.getToolResultArtifactStore().clear();
         if (skillContextBuffer != null) {
             skillContextBuffer.clear();
         }
@@ -290,6 +308,53 @@ public class Agent {
     public record CompactionResult(boolean compacted, long beforeTokens, long afterTokens, String error) {
     }
 
+    /** 把当前可继续推理的会话状态保存为受控 checkpoint。图片和 artifact 原文不会落盘。 */
+    public SessionCheckpointResult saveSessionCheckpoint() {
+        try {
+            SessionCheckpointStore.Checkpoint checkpoint = sessionCheckpointStore.save(
+                    memoryManager.getCurrentProject(),
+                    llmClient == null ? "" : llmClient.getModelName(),
+                    conversationHistory,
+                    toolRegistry.snapshotTodoList());
+            return new SessionCheckpointResult(checkpoint.id(), checkpoint.messages().size(), null);
+        } catch (IOException e) {
+            return new SessionCheckpointResult(null, 0, e.getMessage());
+        }
+    }
+
+    /** 恢复同一项目的 checkpoint；恢复使用当前稳定 system prompt，不信任旧 prompt。 */
+    public SessionCheckpointResult resumeSessionCheckpoint(String sessionId) {
+        try {
+            SessionCheckpointStore.Checkpoint checkpoint = sessionCheckpointStore.load(sessionId);
+            if (!memoryManager.getCurrentProject().equals(checkpoint.projectKey())) {
+                return new SessionCheckpointResult(null, 0, "session 属于其他项目，已拒绝恢复");
+            }
+            conversationHistory.clear();
+            conversationHistory.add(LlmClient.Message.system(buildSystemPrompt()));
+            for (SessionCheckpointStore.StoredMessage message : checkpoint.messages()) {
+                conversationHistory.add(message.toMessage());
+            }
+            memoryManager.clearShortTerm();
+            toolRegistry.clearConversationArtifacts();
+            toolRegistry.restoreTodoList(checkpoint.todoJson());
+            return new SessionCheckpointResult(checkpoint.id(), checkpoint.messages().size(), null);
+        } catch (IOException e) {
+            return new SessionCheckpointResult(null, 0, e.getMessage());
+        }
+    }
+
+    public List<SessionCheckpointStore.CheckpointSummary> listSessionCheckpoints(int limit) throws IOException {
+        return sessionCheckpointStore.list(limit);
+    }
+
+    void setSessionCheckpointStore(SessionCheckpointStore store) {
+        this.sessionCheckpointStore = store == null ? new SessionCheckpointStore() : store;
+    }
+
+    public record SessionCheckpointResult(String sessionId, int messageCount, String error) {
+        public boolean succeeded() { return error == null || error.isBlank(); }
+    }
+
     /** 当前状态栏快照：ctx 表示下一轮请求仍会携带的上下文估算，不含累计 in/out 用量。 */
     public StatusInfo currentStatus(String phase) {
         String normalizedPhase = phase == null || phase.isBlank() ? "idle" : phase;
@@ -303,18 +368,9 @@ public class Agent {
         return StatusInfo.active(model, contextWindow, contextTokens, hitl, normalizedPhase);
     }
 
-    /**
-     * 将记忆上下文注入到 system prompt 中（替换 conversationHistory[0]）
-     */
-    private void updateSystemPromptWithMemory(String memoryContext) {
-        conversationHistory.set(0, LlmClient.Message.system(buildSystemPrompt(memoryContext)));
-    }
-
-    private String buildSystemPrompt(String memoryContext) {
+    private String buildSystemPrompt() {
         return promptAssembler.assemble(PromptMode.AGENT, PromptContext.builder()
                 .projectMemoryContext(buildProjectMemoryContext())
-                .memoryContext(memoryContext)
-                .externalContext(buildExternalContext())
                 .skillIndex(buildSkillIndex())
                 .toolsEnabled(llmClient == null || llmClient.supportsTools())
                 .build());
@@ -322,11 +378,18 @@ public class Agent {
 
     private void maybeCompactHistory() {
         if (historyCompactor == null) return;
-        int trigger = memoryManager.getContextProfile().compressionTriggerTokens();
+        int toolDefinitionTokens = llmClient.supportsTools()
+                ? TokenBudget.estimateToolDefinitionTokens(toolRegistry.getToolDefinitions()) : 0;
+        int trigger = Math.max(1_000,
+                memoryManager.getContextProfile().compressionTriggerTokens() - toolDefinitionTokens);
         try {
-            boolean compacted = historyCompactor.compactIfNeeded(conversationHistory, trigger);
-            if (compacted) {
+            ConversationHistoryCompactor.ContextManagementResult result =
+                    historyCompactor.manageIfNeeded(conversationHistory, trigger);
+            if (result.compacted()) {
                 renderer().stream().println("📦 上下文接近窗口上限，已把早期对话压缩为摘要后继续。");
+            } else if (result.archivedToolResults() > 0) {
+                renderer().stream().println("📦 已归档 " + result.archivedToolResults()
+                        + " 个旧工具结果；需要时可按 artifact_id 恢复。");
             }
         } catch (Exception e) {
             log.warn("conversationHistory compaction failed", e);
@@ -379,6 +442,29 @@ public class Agent {
         String drained = skillContextBuffer.drain();
         if (drained.isEmpty()) return userInput;
         return drained + "\n用户输入：\n" + userInput;
+    }
+
+    private String buildTurnDynamicContext(String memoryContext) {
+        StringBuilder context = new StringBuilder();
+        String todoContext = toolRegistry.getTodoContext();
+        if (!todoContext.isBlank()) {
+            context.append(todoContext);
+        }
+        if (memoryContext != null && !memoryContext.isBlank()) {
+            if (!context.isEmpty()) {
+                context.append("\n\n");
+            }
+            context.append("<relevant-memory>\n")
+                    .append("以下是按当前请求检索出的相关记忆，仅作背景；若与用户本轮指令冲突，以本轮指令为准。\n")
+                    .append(memoryContext.trim())
+                    .append("\n</relevant-memory>");
+        }
+        String externalContext = buildExternalContext();
+        if (!externalContext.isBlank()) {
+            if (!context.isEmpty()) context.append("\n\n");
+            context.append(externalContext);
+        }
+        return context.toString();
     }
 
     private String buildExternalContext() {
@@ -484,12 +570,7 @@ public class Agent {
     }
 
     private int estimateToolsSchemaTokens() {
-        try {
-            return com.yuforge.memory.MemoryEntry.estimateTokens(
-                    new ObjectMapper().writeValueAsString(toolRegistry.getToolDefinitions()));
-        } catch (Exception e) {
-            return 0;
-        }
+        return TokenBudget.estimateToolDefinitionTokens(toolRegistry.getToolDefinitions());
     }
 
     private long estimateCurrentContextTokens() {
@@ -527,8 +608,7 @@ public class Agent {
         int toolCount = tools == null ? 0 : tools.size();
         if (tools != null && !tools.isEmpty()) {
             try {
-                toolsSchemaTokens = com.yuforge.memory.MemoryEntry.estimateTokens(
-                        new ObjectMapper().writeValueAsString(tools));
+                toolsSchemaTokens = TokenBudget.estimateToolDefinitionTokens(tools);
             } catch (Exception e) {
                 log.debug("Failed to estimate tools schema tokens", e);
             }
@@ -634,7 +714,8 @@ public class Agent {
                     elapsed,
                     phase == null || phase.isBlank()
                             ? (totalTokens > 0 || elapsed > 0 ? "running" : "idle")
-                            : phase));
+                            : phase + (toolRegistry.getTodoSummary().isBlank()
+                                    ? "" : " · " + toolRegistry.getTodoSummary())));
         } catch (Exception e) {
             log.debug("status push failed", e);
         }
@@ -672,14 +753,7 @@ public class Agent {
     }
 
     private void emitToolResultSummary(ToolExecutionResult result) {
-        if (result == null || result.name() == null) {
-            return;
-        }
-        String summary = switch (result.name()) {
-            case "web_search" -> webSearchSummary(result);
-            case "web_fetch" -> webFetchSummary(result);
-            default -> "";
-        };
+        String summary = ToolResultSummary.format(result);
         if (!summary.isBlank()) {
             renderer().stream().println(AnsiStyle.subtle("  → " + summary));
         }

@@ -237,6 +237,17 @@ class CliCommandParserTest {
     }
 
     @Test
+    void parsesMemoryClearScope() {
+        CliCommandParser.ParsedCommand global = CliCommandParser.parse("/memory clear --global");
+        CliCommandParser.ParsedCommand all = CliCommandParser.parse("/mem clear --all");
+
+        assertEquals(CliCommandParser.CommandType.MEMORY_CLEAR, global.type());
+        assertEquals("--global", global.payload());
+        assertEquals(CliCommandParser.CommandType.MEMORY_CLEAR, all.type());
+        assertEquals("--all", all.payload());
+    }
+
+    @Test
     void parsesMemoryListSlashCommand() {
         CliCommandParser.ParsedCommand command = CliCommandParser.parse("/memory list");
 
@@ -415,6 +426,14 @@ class CliCommandParserTest {
         assertEquals("add 重构模块", CliCommandParser.parse("/task add 重构模块").payload());
         assertEquals("cancel task_123", CliCommandParser.parse("/task cancel task_123").payload());
         assertEquals("log task_123", CliCommandParser.parse("/task log task_123").payload());
+    }
+
+    @Test
+    void parsesSessionCheckpointCommands() {
+        assertEquals(CliCommandParser.CommandType.SESSION, CliCommandParser.parse("/checkpoint").type());
+        assertEquals("save", CliCommandParser.parse("/checkpoint").payload());
+        assertEquals("list", CliCommandParser.parse("/session").payload());
+        assertEquals("resume session_abcd", CliCommandParser.parse("/resume session_abcd").payload());
     }
 
     @Test

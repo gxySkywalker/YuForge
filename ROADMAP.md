@@ -262,7 +262,7 @@
 - `sampling/createMessage`
 - MCP server 自动重启
 - prompts 加载到对话流（仅保留 `/mcp prompts` 查看 server 暴露的模板）
-- resources 自动注入 system prompt（第 12 期长上下文模式已接入 URI / 描述索引）
+- resources 自动注入当前 user turn 的动态上下文（第 12 期已按 window ≥ 32k 接入 URI / 描述索引）
 - server health ping / heartbeat
 - progress / logging notification 的 UI 展示
 - OAuth Device Flow / Client Credentials
@@ -283,19 +283,18 @@
 
 **功能迭代**（详细开发任务见 `docs/phase-12-long-context.md`）：
 - `LlmClient` 接口扩展能力声明：`maxContextWindow()` / `supportsPromptCaching()` / `promptCacheMode()`
-- `ContextProfile` 统一管理 short / balanced / long 三种上下文模式
-- `AgentBudget` token 预算从写死 300K 改为按当前模型动态计算（默认 80% × maxContextWindow，仍支持系统属性覆盖）
-- 长 / 短上下文双模式：
-  - 短 / balanced：保留第 3 期 Memory 摘要压缩策略
-  - long（≥ 100k window）：跳过摘要压缩，提高 RAG 默认 topK（20），扩大短期记忆预算
+- `ContextProfile` 按模型 window 连续派生预算；自动治理高水位不晚于 window 的 80%
+- `AgentBudget` 默认不设累计 token 硬墙，显式系统属性可为 CI / 批处理设置成本限额
+- conversationHistory 分层治理：旧大型工具结果先归档为可恢复 artifact，仍超预算再做 turn-aware 全量分块结构化压缩
+- 动态检索记忆追加到当前 user turn，工具 schema 稳定排序，减少无意义的 prompt cache 前缀失效
 - prompt caching 接入：
   - 能力声明与 `/context` 可见化
   - OpenAI-compatible usage 中解析 cached input tokens
   - DeepSeek V4 走 automatic prefix cache；当前不注入未确认兼容的 provider 私有字段
 - 上下文成本可见化：每轮输出 `已用 X / Y token (window W, cached: Z, 估算 ¥A)`
 - 检索策略自适应：`search_code` 未传 `top_k` 时按上下文模式选择 5 / 10 / 20
-- **MCP resources 自动注入**（与第 11 期联动）：长模式下，把所有 server 已知 resources 的 URI + 描述（不含 body）作为索引注入 system prompt；ReAct / Plan / Team 都接入
-- `/context` 命令扩展：显示当前 window、动态预算、模式、prompt cache、RAG topK、resources 是否已自动注入
+- **MCP resources 自动注入**（与第 11 期联动）：window ≥ 32k 时，把所有 server 已知 resources 的 URI + 描述（不含 body）作为索引注入当前 user turn 的动态上下文；ReAct / Plan / Team 都接入
+- `/context` 命令扩展：分类显示 system、工具 schema、conversation 占用，以及治理阈值、prompt cache、resources 是否已自动注入
 
 **核心知识点**：
 - 长上下文模型的成本模型（input vs cached input 价差通常 5–10 倍）
@@ -484,7 +483,7 @@
 
 **前置依赖**：第 1–16 期全链路（所有 system prompt 的累积）
 
-**当前状态**：MVP 已落地。ReAct、Plan task executor、Multi-Agent 三角色、Planner 已接入 `PromptAssembler`，内置资源位于 `src/main/resources/prompts/`，覆盖路径支持 `~/.yuforge/prompts/...` 与 `.yuforge/prompts/...`。
+**当前状态**：MVP 已落地。ReAct、Plan task executor、Multi-Agent 三角色、Planner 已接入 `PromptAssembler`；动态日期、workspace、相关记忆和 MCP resource index 已迁移到当前 user turn；工具失败恢复已接入结构化错误与同签名尝试计数。内置资源位于 `src/main/resources/prompts/`，覆盖路径支持 `~/.yuforge/prompts/...` 与 `.yuforge/prompts/...`。
 
 **目标**：把分散在 `Agent.java` / `PlanExecuteAgent.java` / `SubAgent.java` 三处的硬编码 system prompt 重构为编译时嵌入的 Markdown 分层，支持用户级覆盖，让 prompt 调优从"改 Java 源码 + 重编译"变成"改 Markdown 文件"。
 
@@ -498,6 +497,8 @@
 - 用户级覆盖：`~/.yuforge/prompts/base.md` 可整体替换内置 base.md；`~/.yuforge/prompts/modes/agent.md` 可覆盖特定模式；项目级 `.yuforge/prompts/...` 优先级更高
 - 启动时校验：必含 `## Language` section（保证 reasoning_content 语言跟随）
 - 兼容旧有 API：`Agent.java` / `PlanExecuteAgent.java` / `SubAgent.java` / `Planner.java` 不再手写运行模式 prompt，改为调 `PromptAssembler.assemble(mode, context)`
+- 动态上下文边界：system prompt 仅保留稳定模块；时间戳、workspace、shell、相关记忆、MCP resource index 追加到当前 user turn
+- 失败恢复闭环：工具结果归一化错误码与 retryable，按规范化调用签名累计尝试次数，并由静态 Tool Recovery 手册约束换策略与停止条件
 - 自带 prompt 质量审计模板（参考 DeepSeek TUI `PROMPT_ANALYSIS.md`）：每次改 prompt 都应该写 Gap 分析
 
 **设计参考**：DeepSeek TUI `crates/tui/src/prompts.rs` + `crates/tui/src/prompts/*.md` 的分层架构，以及 `PROMPT_ANALYSIS.md` 的自我批判方法论。

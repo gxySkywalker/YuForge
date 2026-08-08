@@ -45,4 +45,10 @@ class WechatPolicyDeciderTest {
         assertFalse(decider.decide("save_memory", "{\"fact\":\"secret\"}").allowed());
         assertFalse(decider.decide("browser_connect", "{}").allowed());
     }
+
+    @Test
+    void allowsReadOnlyToolArtifactRecovery() {
+        WechatPolicyDecider decider = new WechatPolicyDecider(WechatPolicyConfig.forWorkspace(tempDir));
+        assertTrue(decider.decide("read_tool_artifact", "{\"artifact_id\":\"tr_demo\"}").allowed());
+    }
 }

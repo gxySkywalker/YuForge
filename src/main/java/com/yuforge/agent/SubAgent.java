@@ -6,11 +6,14 @@ import com.yuforge.llm.LlmClient;
 import com.yuforge.llm.LlmTraceLogger;
 import com.yuforge.lsp.LspDiagnosticReport;
 import com.yuforge.memory.ConversationHistoryCompactor;
+import com.yuforge.memory.TokenBudget;
 import com.yuforge.context.ContextProfile;
 import com.yuforge.prompt.PromptAssembler;
 import com.yuforge.prompt.PromptContext;
 import com.yuforge.prompt.PromptMode;
 import com.yuforge.prompt.ProjectMemoryLoader;
+import com.yuforge.prompt.RuntimeContextFormatter;
+import com.yuforge.render.ReasoningDisplayPolicy;
 import com.yuforge.skill.SkillContextBuffer;
 import com.yuforge.skill.SkillIndexFormatter;
 import com.yuforge.skill.SkillRegistry;
@@ -52,6 +55,7 @@ public class SubAgent {
     private SkillContextBuffer skillContextBuffer;
     private final ConversationHistoryCompactor historyCompactor;
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
+    private final RuntimeContextFormatter runtimeContextFormatter = RuntimeContextFormatter.systemDefault();
 
     public SubAgent(String name, AgentRole role, LlmClient llmClient, ToolRegistry toolRegistry) {
         this.name = name;
@@ -60,7 +64,8 @@ public class SubAgent {
         this.toolRegistry = toolRegistry;
         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
         this.conversationHistory = new ArrayList<>();
-        this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+        this.historyCompactor = new ConversationHistoryCompactor(
+                llmClient, toolRegistry.getToolResultArtifactStore());
         this.conversationHistory.add(LlmClient.Message.system(getSystemPrompt()));
     }
 
@@ -84,7 +89,6 @@ public class SubAgent {
     private String getSystemPrompt() {
         return promptAssembler.assemble(promptMode(), PromptContext.builder()
                 .projectMemoryContext(buildProjectMemoryContext())
-                .externalContext(buildExternalContext())
                 .skillIndex(buildSkillIndex())
                 .toolsEnabled(llmClient == null || llmClient.supportsTools())
                 .build());
@@ -103,9 +107,16 @@ public class SubAgent {
         ContextProfile profile = toolRegistry == null ? null : toolRegistry.getContextProfile();
         if (profile == null) return;
         try {
-            boolean compacted = historyCompactor.compactIfNeeded(conversationHistory, profile.compressionTriggerTokens());
-            if (compacted && out != null) {
-                out.println("📦 [" + name + "] 上下文接近窗口上限，已把早期对话压缩为摘要后继续。");
+            int toolDefinitionTokens = shouldUseTools() && llmClient.supportsTools()
+                    ? TokenBudget.estimateToolDefinitionTokens(toolRegistry.getToolDefinitions()) : 0;
+            int trigger = Math.max(1_000, profile.compressionTriggerTokens() - toolDefinitionTokens);
+            ConversationHistoryCompactor.ContextManagementResult result =
+                    historyCompactor.manageIfNeeded(conversationHistory, trigger);
+            if (result.compacted() && out != null) {
+                out.println("📦 [" + name + "] 上下文接近窗口上限，已把早期对话压缩为结构化检查点后继续。");
+            } else if (result.archivedToolResults() > 0 && out != null) {
+                out.println("📦 [" + name + "] 已归档 " + result.archivedToolResults()
+                        + " 个旧工具结果，可按 artifact_id 恢复。");
             }
         } catch (Exception e) {
             log.warn("[{}] conversationHistory compaction failed", name, e);
@@ -174,7 +185,12 @@ public class SubAgent {
         log.info("[{}] executing task from {}: type={}", name, task.fromAgent(), task.type());
         pruneHistoricalImagePayloads();
         refreshSystemPrompt();
-        String taskContent = prependSkillBodies(task.content());
+        String taskContent = runtimeContextFormatter.prepend(
+                prependSkillBodies(task.content()),
+                Path.of(toolRegistry.getProjectPath()),
+                toolRegistry.getCommandShell(),
+                "agent: " + name + "\nrole: " + role + "\nphase: running",
+                buildExternalContext());
 
         // 将任务注入对话
         conversationHistory.add(ImageReferenceParser.userMessage(
@@ -184,6 +200,7 @@ public class SubAgent {
         SubAgentStreamRenderer streamRenderer = new SubAgentStreamRenderer(name, role, out);
 
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
+        ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
 
         // 与 Agent.java 对称：主退出条件 = LLM 自决，budget 仅在 token / 停滞 / 硬轮数兜底。
         while (true) {
@@ -229,9 +246,10 @@ public class SubAgent {
                     // 没有换行的 pending 内容会被 HITL 提示"跨过"导致标题错位。
                     streamRenderer.resetBetweenIterations();
 
-                    List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls());
+                    List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls(), out);
                     for (ToolExecutionResult toolResult : toolResults) {
-                        conversationHistory.add(LlmClient.Message.tool(toolResult.id(), toolResult.result()));
+                        ToolAttemptTracker.Observation observation = attemptTracker.observe(toolResult);
+                        conversationHistory.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
                     }
                     appendImageToolMessages(toolResults);
                     continue;
@@ -327,7 +345,7 @@ public class SubAgent {
         log.info("[{}] injected LSP diagnostics into sub-agent conversation", name);
     }
 
-    private List<ToolExecutionResult> executeToolCalls(List<LlmClient.ToolCall> toolCalls) {
+    private List<ToolExecutionResult> executeToolCalls(List<LlmClient.ToolCall> toolCalls, PrintStream out) {
         List<ToolInvocation> invocations = new ArrayList<>();
         for (LlmClient.ToolCall toolCall : toolCalls) {
             String toolName = toolCall.function().name();
@@ -340,7 +358,14 @@ public class SubAgent {
         if (invocations.size() > 1) {
             log.info("[{}] executing {} tool calls in parallel", name, invocations.size());
         }
-        return toolRegistry.executeTools(invocations);
+        List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
+        for (ToolExecutionResult result : results) {
+            String summary = ToolResultSummary.format(result);
+            if (out != null && !summary.isBlank()) {
+                out.println(AnsiStyle.subtle("  → " + summary));
+            }
+        }
+        return results;
     }
 
     private void appendImageToolMessages(List<ToolExecutionResult> toolResults) {
@@ -464,6 +489,9 @@ public class SubAgent {
             if (delta == null || delta.isEmpty()) {
                 return;
             }
+            if (!ReasoningDisplayPolicy.showRawReasoning()) {
+                return;
+            }
             if (contentStarted) {
                 lateReasoning.append(delta);
                 return;
@@ -545,7 +573,7 @@ public class SubAgent {
                 contentRenderer = null;
             }
             String late = lateReasoning.toString().trim();
-            if (!late.isEmpty()) {
+            if (ReasoningDisplayPolicy.showRawReasoning() && !late.isEmpty()) {
                 out.println();
                 out.println(AnsiStyle.heading("🧠 补充思考 [" + agentName + "]"));
                 TerminalMarkdownRenderer r = new TerminalMarkdownRenderer(out);
@@ -570,7 +598,7 @@ public class SubAgent {
                 contentRenderer.finish();
             }
             String late = lateReasoning.toString().trim();
-            if (!late.isEmpty()) {
+            if (ReasoningDisplayPolicy.showRawReasoning() && !late.isEmpty()) {
                 out.println();
                 out.println(AnsiStyle.heading("🧠 补充思考 [" + agentName + "]"));
                 TerminalMarkdownRenderer r = new TerminalMarkdownRenderer(out);

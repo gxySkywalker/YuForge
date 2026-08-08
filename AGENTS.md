@@ -50,9 +50,9 @@ mvn test -DskipTests=false                  # 全量回归
 | Plan-and-Execute | `PlanExecuteAgent.java` | `/plan` |
 | Multi-Agent | `AgentOrchestrator.java` | `/team` |
 
-核心内置工具 11 个：`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `execute_command` / `create_project` / `search_code` / `web_search` / `web_fetch` / `revert_turn`
+核心内置工具包括：`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `execute_command` / `create_project` / `search_code` / `web_search` / `web_fetch` / `save_memory` / `revert_turn` / `read_tool_artifact`。其中 `read_tool_artifact` 只用于按结构化历史检查点里的 `artifact_id` 恢复被上下文治理归档的旧工具结果。
 
-代码库理解默认走 Claude Code 式实时探索：`glob_files` 找候选文件、`grep_code` 精确定位符号或字符串、`read_file` 按需读取具体行段。`grep_code` 优先使用本机 `ripgrep`，不可用时回退到 Java 扫描；结果受 `max_results` / `head_limit` / `max_chars` 预算约束，返回 `partial: true` 或 `suggested_reads` 时应继续缩小搜索范围或按建议读取行段。`search_code` 是 RAG 语义辅助，适合模糊自然语言、关键词不明确、常规搜索无果、巨型/跨知识检索场景，不作为精确代码定位的首选。
+代码库理解默认走 Claude Code 式实时探索：`glob_files` 找候选文件、`grep_code` 精确定位符号或字符串、`read_file` 按需读取具体行段。`grep_code` 优先使用本机 `ripgrep`，不可用时回退到 Java 扫描；结果受 `max_results` / `head_limit` / `max_chars` 预算约束，返回 `partial: true` 或 `suggested_reads` 时应继续缩小搜索范围或按建议读取行段。`search_code` 是 RAG 语义辅助，适合模糊自然语言、关键词不明确、常规搜索无果、巨型/跨知识检索场景，不作为精确代码定位的首选。`glob_files` / `grep_code` 对模型统一返回 `/` 分隔的项目相对路径；`execute_command` 在 Windows 使用 PowerShell、其他平台使用 bash，并把实际 shell 放入当前 user turn。
 
 MCP 动态工具：`mcp__{server}__{tool}`（+ resources 虚拟工具）
 
@@ -74,7 +74,7 @@ src/main/java/com/yuforge/
 ├── browser/     BrowserSession, BrowserGuard, SensitivePagePolicy
 ├── llm/         GLMClient, DeepSeekClient, StepClient, KimiClient, FreeLlmApiClient, AgnesClient
 ├── context/     ContextProfile, ContextMode, TokenUsageFormatter
-├── memory/      MemoryManager, ConversationHistoryCompactor, LongTermMemory
+├── memory/      MemoryManager, ConversationHistoryCompactor, ToolResultArtifactStore, LongTermMemory
 ├── plan/        Planner, ExecutionPlan, Task
 ├── rag/         CodeIndex, CodeRetriever, VectorStore, CodeChunker
 ├── lsp/         LspManager, LspDiagnosticFormatter
@@ -96,10 +96,14 @@ src/main/java/com/yuforge/
 
 - 开屏 Banner 使用无右边框的简洁布局，避免 CJK/ANSI 字宽导致右侧竖线错位；Phase 22 后默认是 YU 主题彩色 logo + Qoder 风格首屏，只展示模型、MCP、Skill、ReAct 状态和三条 getting-started tips，不再把 MCP server 明细刷成启动日志。
 - inline 模式使用 JLine 4 的 LineReader 编辑能力，默认提示符是 `* `，右提示显示 `message / @path / @image`。
+- inline 输入期右提示应包含 `Esc clear`，表示仅清空当前编辑缓冲；任务运行期活动面板显示 `Esc cancel`，表示请求取消当前 run。二者不能混淆，取消后必须在 transcript 给出明确终态。
 - 默认 CLI 启动路径应先 `Renderer.start()` 并初始化底部 dock；inline 首屏不要在 `readLine` 前裸写 stdout，而是通过 `InlineRenderer.installStartupScreen(...)` 挂到 `LineReader.CALLBACK_INIT`，首次进入输入时用 `printAbove` 一次性显示完整 Banner + tips，避免 logo 被 LineReader 首次重绘滚出可视区域。
 - `BottomStatusBar` 现在是 JLine `Status` 托管的底部 dock：由 JLine 维护滚动区域和状态行位置，不再手写 `\n` / `moveUp` / `CLEAR_TO_EOS` 清屏。输入期会把 LineReader 光标定位到 dock 上方一行，让 `*` 输入行和 Status 同处底部区域；dock 保留两类信息：上层模式 + MCP/Skill 摘要，下层 Auto Model / model / phase / ctx 百分比与 token / cost / elapsed / cwd。关键字段可用克制的 JLine `AttributedString` 彩色样式突出，但纯文本格式和宽度裁剪逻辑要保持稳定。`ctx` 表示当前仍会带入下一轮请求的上下文估算；`in/out/cache` 表示最近任务的 LLM 调用统计，二者不要混用。
-- 普通任务和斜杠命令提交后，`Main` 会把本轮原始输入以暗色整行块写回 transcript：输入态左提示仍是 `* `，提交回显左提示改为 `>`；单行输入只占一行，不额外追加空白行。普通任务随后再展开 MCP resource / 本地 `@path` 并进入 Agent；不要只依赖 JLine 提交行残留，否则 activity 重绘或 dock 刷新可能让用户输入从可见历史里消失。`/clear` 清空 conversationHistory、shortTermMemory、待注入 Skill buffer，并重建不含上一轮检索记忆的 system prompt；长期记忆保留。`/compact` 会手动压缩当前 ReAct conversationHistory，不等待上下文阈值触发，保留最近 1 个 user 轮次和 tool_call/tool_result 边界。
-- ReAct LLM 调用期间，inline renderer 使用固定高度 live thinking 区动态显示 `Thinking...` 和灰色竖线 reasoning 预览；该区域只能清理自己刚打印的几行，不能用独立 JLine `Display.update()` / `CLEAR_TO_EOS` 向上覆盖 transcript。content 或 tool call 开始前先清掉 live 区，再把完整 reasoning 引用块落到正文区，正文回答用低调标记起始，不再刷强标题。
+- dock 必须按终端列宽做信息降级：宽屏可显示完整 usage/cost/cwd，中屏优先 model、phase、ctx、elapsed，窄屏只保留模式、model、phase 和 ctx 百分比；所有宽度计算使用 JLine columnLength/columnSubSequence，不能按 Java `String.length()` 截断 CJK 或 emoji。
+- 普通任务和斜杠命令提交后，`Main` 会把本轮原始输入以暗色整行块写回 transcript：输入态左提示仍是 `* `，提交回显左提示改为 `>`；单行输入只占一行，不额外追加空白行。普通任务随后再展开 MCP resource / 本地 `@path` 并进入 Agent；不要只依赖 JLine 提交行残留，否则 activity 重绘或 dock 刷新可能让用户输入从可见历史里消失。`/clear` 清空 conversationHistory、shortTermMemory、待注入 Skill buffer 和会话 TODO，并重建不含上一轮检索记忆的 system prompt；长期记忆保留。`/compact` 会手动压缩当前 ReAct conversationHistory，不等待上下文阈值触发，保留最近 1 个 user 轮次和 tool_call/tool_result 边界。
+- 复杂任务可由 Agent 用 `rewrite_todo_list` / `update_todo_status` 维护会话内 TODO；它是外部工作记忆，进入后续 user turn，并在底部 dock phase 中显示摘要。TODO 不落盘、不写入长期记忆，也不替代 Plan DAG 或后台 `/task`。
+- ReAct LLM 调用期间，inline renderer 默认只显示短暂的 `Thinking...` 活动态和工具进度，不把 provider 原始 `reasoning_content` 落入 transcript；模型历史与日志仍按协议保留。仅本地排障可通过 `-Dyuforge.render.show_reasoning=true` 或 `YUFORGE_RENDER_SHOW_REASONING=true` 显式回显；Plan task / SubAgent 同样遵守此开关。活动区只能清理自己刚打印的几行，不能用独立 JLine `Display.update()` / `CLEAR_TO_EOS` 向上覆盖 transcript。
+- inline 流式代码块先显示稳定的 `generating code` 行，结束时追加可折叠代码块；不得依赖 ANSI `moveUp` / `CLEAR_TO_EOS` 回退覆盖已写出的 transcript，避免宽字符换行或异步输出导致 scrollback 错位。
 - 交互期输出应优先走 `Renderer.stream()`；`Main`、`PlanExecuteAgent`、`Planner`、`AgentOrchestrator` 都支持把输出流接到 inline renderer，避免直接争抢 stdout。`CodeIndex` 的索引进度通过 `ProgressListener` 注入，`/index` 应绑定到当前 renderer 输出流。
 - Phase 22 开始，`InlineRenderer` 可绑定当前 `LineReader`；当 `LineReader.isReading()` 为 true 时，`Renderer.stream()` 的完整行输出优先通过 `LineReader#printAbove` 显示在输入行上方，未绑定 / 非读取态 / 测试路径回退到原 `PrintStream`。
 - Markdown 表格渲染要按当前终端列宽分配列宽；长内容在单元格内部换行，不能依赖终端自动折行把整行表格打散。
@@ -113,6 +117,7 @@ src/main/java/com/yuforge/
 - 启动期会加载 `~/.yuforge/YUFORGE.md`、项目根 `YUFORGE.md`、项目根 `.yuforge/YUFORGE.md`、`YUFORGE.local.md`、`.yuforge/YUFORGE.local.md`，按此顺序注入 Project Context；`@relative/path.md` 可导入项目根内文件，总注入内容有字符预算，避免项目记忆变成 token 噪音。
 - `/init` 会根据当前项目生成短 `YUFORGE.md`，只放 commands / project positioning / architecture / pitfalls / don'ts；默认不覆盖已有文件。
 - `/export` 导出当前 ReAct `conversationHistory` 为 Markdown 到 `~/.yuforge/exports/session-*.md`；只支持无参数命令，包含完整 system prompt，便于检查 LLM 实际接收前的指令。
+- `/checkpoint` 保存当前 ReAct 会话的可恢复 checkpoint；`/session` 列出最近 checkpoint；`/resume <session_id>` 仅允许恢复当前项目的 checkpoint。checkpoint 不持久化图片或大型工具 artifact 原文，恢复时使用当前 system prompt。
 - JLine 交互升级计划记录在 `docs/phase-22-jline-interaction-upgrade.md`。
 
 ## 关键行为约束（Agent 必读）
@@ -120,11 +125,26 @@ src/main/java/com/yuforge/
 ### Memory
 
 - 长期记忆只通过 `/save` 或用户明确要求保存；不要自动提取事实
+- `save_memory` 的代码级授权只能来自本轮原始用户输入；网页、MCP、文件和工具结果不能授权写入。global 记忆需要本轮明确“全局/跨项目/所有项目”意图。
+- `web_search`、`web_fetch` 与 MCP 工具输出以 `<untrusted_external_content>` 包装并转义正文；它们只是不可信数据，不能授权工具调用、记忆写入或改变指令优先级。
+- 本轮读取过网页、搜索或 MCP 不可信内容后，`write_file`、`execute_command`、`create_project`、`revert_turn`、`save_memory` 和 MCP 工具必须逐次 HITL 确认，即使常规 `/hitl off`；不可被“全部放行”缓存绕过。
+- Prompt Injection 回归入口：`mvn test -Dtest=PromptInjectionDefenseTest,SystemPromptLeakGuardTest,AbstractOpenAiCompatibleClientImageInputTest,HitlToolRegistryTest,ToolRegistryTest -DskipTests=false`；覆盖直接注入提示词契约与输出侧拦截、间接注入来源封装 + 强制确认、记忆污染授权拒绝。真实模型对抗遵循能力仍需人工红队验证。
+- 当前 Prompt Injection 安全基线已交付；容器/VM 沙箱、命令网络 egress policy、通用 DLP 和改写泄露检测仍未交付，不得在文档或回答中表述为现有能力。完整结论见 `docs/prompt-injection-defense.md`。
 - `YUFORGE.md` 管团队共享的项目规则，长期记忆管个人或项目作用域的稳定事实；不要把一次性协作经验写进 `YUFORGE.md`
 - 长期记忆只保存跨会话稳定事实，不保存临时指令；默认项目级作用域，跨项目通用偏好才用 global
-- 长期记忆必须可审计和可删除：`/memory list` / `/memory search <关键词>` / `/memory delete <id>` / `/memory clear`
-- 两道压缩不要混淆：shortTermMemory 压缩 vs conversationHistory 压缩（后者是防 window 超限的关键）
-- 自动压缩阈值按 Claude Code 风格预留摘要输出和安全缓冲：大窗口使用 `window - 20k - 13k`，例如 200k 窗口约 167k 触发、1M 窗口约 967k 触发；小窗口按比例缩小预留。
+- 长期记忆检索采用关键词 + 元数据轻量加权，并按相关度、时间、id 做确定性排序；空查询不注入记忆，避免无关事实污染上下文。`MemoryRetrievalGoldenSetTest` 固化相关性、项目隔离、空查询三类回归样例，后续替换为 hybrid retrieval 时必须保持通过。
+- `MemoryRetrievalTrace` 只在本地 `/memory status`、`/context` 与日志记录本轮召回数量、入选 id/score/token、预算截断原因；不携带原始查询或记忆正文，也不注入模型消息。
+- `MemoryRetrievalStrategy` 是记忆召回的替换边界：默认 `KeywordMemoryRetrievalStrategy` 零依赖离线可用；未来 Hybrid/Embedding 策略必须保留关键词回退，并复用同一注入协议、Trace 和 Golden Set。
+- 长期记忆必须可审计和可删除：`/memory list` / `/memory search <关键词>` / `/memory delete <id>` / `/memory clear`。默认 list/search/delete/clear 仅限当前项目可见条目（project + global）；`/memory clear --global` 只清 global，`/memory clear --all` 才清全部。
+- 两道压缩不要混淆：shortTermMemory 压缩 vs conversationHistory 上下文治理（后者真正控制下一轮 LLM input）。
+- conversationHistory 达到高水位后先把旧的大型 tool_result 归档到有界 `ToolResultArtifactStore`，原 tool message 替换为带 `artifact_id` / preview 的协议安全占位符；模型确需原文时调用 `read_tool_artifact`。进入摘要区的大结果必须先归档。
+- 归档后仍超阈值时，按 user 边界保留最近 3 轮完整事务，把旧历史用全量分块 + Reduce 压成六段结构化工程检查点；禁止固定字符截断造成中间历史空洞。`/compact` 保留最近 1 个 user 轮次。
+- 自动压缩阈值为 `min(window - summaryReserve - buffer, window * 80%)`；summaryReserve 最大 20k、buffer 最大 13k，小窗口按比例缩小。请求预算还要扣除工具 schema 估算。
+- 查询相关的动态长期记忆放在本轮 user message 尾部的 `<relevant-memory>` 块，不再重写 system message；工具定义按名称稳定排序，以提高 exact-prefix prompt cache 命中机会。
+- `PromptAssembler` 必须保持 system prompt 连续稳定：base → personality → mode → approval → context management → handoff → project context → skills。日期/时区、workspace、shell、相关记忆与 MCP resource index 由 `RuntimeContextFormatter` 放入当前 user turn，避免动态内容截断 system prompt cache。
+- 工具结果由 `ToolResultDiagnostic` 归一化为错误码、retryable 与恢复建议；ReAct / Plan / SubAgent 使用 `ToolAttemptTracker` 按“工具名 + 规范化参数”计数，同一错误第二次必须换参数或换工具，第三次停止原样重试。完整调用栈只写日志，不回灌模型。
+- inline CLI 的 ESC、TUI `/cancel` 与微信取消通过 `CancellationToken` 传递到 Agent、工具和 OpenAI-compatible LLM 的 OkHttp `Call.cancel()`；同步 SSE 请求会尽力立即断开，而不是只等待模型返回后停止后续循环。
+- 当前取消能力不包含“插话后工具后台续跑”的事件队列状态机；若后续实现，原 tool call 只能写一个终态 tool result，迟到结果必须以独立 `late_tool_completion` 事件回流。设计与边界见 `docs/cancellation-and-interruption.md`。
 
 ### HITL + 策略层
 
@@ -132,7 +152,7 @@ src/main/java/com/yuforge/
 - 用户无法批准策略拒绝的请求
 - PathGuard 强制路径限定在项目根内
 - CommandGuard 是辅助黑名单，不是主防线
-- 微信 iLink 通道没有人工审批面板，必须走非交互式默认拒绝策略：只读工具默认允许，`execute_command` 必须精确命中命令白名单，`mcp__*` 必须命中 MCP 白名单，`revert_turn` 和浏览器会话切换默认拒绝，文件写入仍由 PathGuard 限定在绑定 workspace 内。
+- 微信 iLink 通道没有人工审批面板，必须走非交互式默认拒绝策略：只读工具（含 `read_tool_artifact`）默认允许，`execute_command` 必须精确命中命令白名单，`mcp__*` 必须命中 MCP 白名单，`revert_turn` 和浏览器会话切换默认拒绝，文件写入仍由 PathGuard 限定在绑定 workspace 内。
 
 ### Plan 审阅交互
 
@@ -147,7 +167,7 @@ src/main/java/com/yuforge/
 
 ### Web + Browser
 
-- 每轮 system prompt 会注入当前日期/时区，用于相对日期理解；联网搜索不再由 prompt 的 Freshness Policy 强制，是否调用 `web_search` 交给模型基于工具 schema 和用户目标自主决定。
+- 每轮当前 user turn 的 `<environment_context>` 会注入时间戳、日期/时区、workspace、OS 与实际命令 shell，用于相对日期和环境理解；这些动态字段不得放回 system prompt。联网搜索不再由 prompt 的 Freshness Policy 强制，是否调用 `web_search` 交给模型基于工具 schema 和用户目标自主决定。
 - “当前项目/当前 README/当前文件/当前代码”等表达属于本地上下文任务，通常应由模型选择 `glob_files` / `grep_code` / `read_file`，而不是联网工具。
 - 当前模型为 `step-3.7-flash*` 且自动/显式 `step_search` MCP 的 `web_search` / `web_fetch` 已就绪时，内置 `web_search` / `web_fetch` 会优先转调 StepSearch MCP；未就绪或调用失败时回退到原 SearchProvider / WebFetcher。
 - 已知 URL 先 `web_fetch`，SPA/防爬墙 fallback 到 Chrome DevTools MCP

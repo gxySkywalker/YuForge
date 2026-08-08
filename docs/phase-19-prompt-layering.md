@@ -63,19 +63,27 @@ base
 personality
 mode
 approval
-runtime_context
-project_context
-skills
 context_mgmt
 handoff
+project_context
+skills
 ```
 
-其中 `runtime_context`、`project_context` 和 `skills` 是运行期动态段：
+这些 section 共同组成稳定的 system prompt：
 
-- 当前日期 / 系统时区
-- `memoryContext`
-- `externalContext`（例如 MCP resource index）
-- `skillIndex`
+- `project_context`：项目级 `YUFORGE.md` 等稳定规则
+- `skills`：当前启用的 Skill 索引
+
+会变化的内容不再属于 system prompt。`RuntimeContextFormatter` 在当前 user turn 前置：
+
+```text
+environment_context(timestamp/date/timezone/workspace/os/shell)
+agent_state(turn/task/role/phase)
+dynamic_context(relevant memory / MCP resource index)
+user_request
+```
+
+这样日期、工作目录、检索记忆或 MCP resource 变化时，不会截断 system prompt 的 exact-prefix cache；工作目录变化也只需追加新的 user turn，而不是重写历史前缀。
 
 ## 覆盖规则
 
@@ -130,7 +138,7 @@ handoff
 mvn test -Dtest=PromptAssemblerTest,PlannerTest,PlanExecuteAgentTest,SubAgentTest,AgentOrchestratorTest,AgentMemoryHintTest
 ```
 
-结果：通过，28 个测试，0 failures / 0 errors。
+本次缓存前缀顺序调整后重新执行：通过，30 个测试，0 failures / 0 errors。
 
 ## 当前边界
 

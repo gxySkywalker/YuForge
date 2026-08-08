@@ -18,9 +18,22 @@ mvn test -Pquick
 # 代码搜索 deterministic golden set
 mvn test -Dtest=CodeSearchGoldenSetTest -DskipTests=false
 
+# Prompt Injection 防御回归集
+mvn test -Dtest=PromptInjectionDefenseTest,SystemPromptLeakGuardTest,AbstractOpenAiCompatibleClientImageInputTest,HitlToolRegistryTest,ToolRegistryTest -DskipTests=false
+
 # 发版或大范围重构前再跑全量
 mvn test -DskipTests=false
 ```
+
+## 架构设计文档
+
+- [上下文与记忆工程设计说明](docs/context-memory-engineering.md)：Prompt Cache 约束、长上下文治理、工具结果归档恢复、会话 checkpoint、长期记忆检索与评测基线。
+- [Prompt Injection 防御与回归矩阵](docs/prompt-injection-defense.md)：直接/间接/记忆注入的防线、自动化用例和已知边界。
+- [取消与打断机制](docs/cancellation-and-interruption.md)：同步 SSE 请求取消链路、验证方式，以及事件队列打断的后续边界。
+
+安全边界说明：当前已交付 Prompt Injection 的提示词、来源、授权、审批和输出侧防线；容器/VM 沙箱、命令网络出口控制与通用 DLP 仍是后续增强，详见上面的防御文档。
+
+取消语义：inline CLI 的 `ESC`、TUI `/cancel` 与微信取消会中断后续 Agent/工具循环，并向 OpenAI-compatible provider 的同步 SSE HTTP 请求传播 `Call.cancel()`；网络层仍以 provider 对连接关闭的响应速度为准。
 
 ## 演进历程
 
@@ -42,10 +55,15 @@ mvn test -DskipTests=false
 
 - 短期记忆管理当前对话与工具结果
 - 长期记忆通过 `/save <事实>` 或用户明确说“记一下 / 记住”时的 `save_memory` 保存关键事实，默认项目级作用域，跨会话复用
+- `save_memory` 只接受本轮原始用户的明确保存授权；网页、MCP、文件或工具结果中的“记住/保存”指令无权写入记忆，global 记忆还须明确跨项目意图
+- `web_search`、`web_fetch`、MCP 工具结果会显式标记为不可信外部内容；正文转义后仅作为数据参考，不具备调用工具、写入记忆或改变权限的授权能力
+- 本轮读取过不可信外部内容后，写文件、执行命令、保存记忆等副作用操作会强制逐次确认，即使常规 HITL 处于关闭状态
+- 对系统提示词原文复述提供输出侧连续片段检测；为避免流式竞态，模型正文在完整扫描后才显示，命中时替换为安全答复
 - 项目级记忆通过 `YUFORGE.md` / `.yuforge/YUFORGE.md` 启动自动注入，适合提交到仓库的团队共享规则；`YUFORGE.local.md` / `.yuforge/YUFORGE.local.md` 只做本地覆盖
 - 注入给模型的相关记忆只使用长期稳定事实，不把当前轮短期对话误当成“历史记忆”
-- 对话接近预算时自动做摘要压缩
-- 新增 `/memory` 查看状态、`/memory list/search/delete/clear` 管理长期记忆、`/save` 手动保存事实；Agent 在用户明确说“记一下 / 记住”时可调用 `save_memory`
+- 对话接近预算时先归档旧的大型工具结果，再把旧轮次全量分块压缩为结构化工程检查点；归档原文可按 artifact_id 恢复
+- `/checkpoint` 保存当前会话、`/session` 查看最近 checkpoint、`/resume <session_id>` 恢复同一项目会话；图片和旧工具 artifact 原文不会跨会话持久化
+- 新增 `/memory` 查看状态、`/memory list/search/delete/clear` 管理长期记忆、`/save` 手动保存事实；默认操作仅覆盖当前项目和 global 可见记忆，`/memory clear --global` / `--all` 需要显式指定更大清理范围；Agent 在用户明确说“记一下 / 记住”时可调用 `save_memory`
 
 ### 第四期：RAG 检索 + 代码库理解
 
@@ -114,12 +132,17 @@ mvn test -DskipTests=false
 
 - `LlmClient` 声明模型能力：`maxContextWindow()`、`supportsPromptCaching()`、`promptCacheMode()`
 - GLM-5.1 默认 200k window，DeepSeek V4 默认 1M window，Agnes 2.0 Flash 默认 1M window，StepFun 默认 256k window，Kimi K2.6 默认 256k window，FreeLLMAPI 默认按 128k 保守预算
-- `AgentBudget` 按当前模型动态计算预算，默认 `80% * maxContextWindow`，仍可用系统属性覆盖
-- short / balanced / long 三种上下文模式：长上下文模式跳过摘要压缩，语义检索 topK 可提升到 20
-- `search_code` 未显式传 `top_k` 时按上下文模式自适应；默认代码定位仍优先实时 grep/read
-- 长上下文模式下自动把 MCP resources 的 URI / 描述索引注入 system prompt，不自动注入正文
+- `AgentBudget` 默认不设累计 token 硬墙，只保留重复工具调用与 50 轮兜底；CI 可用 `yuforge.react.token.budget` 显式限额
+- 自动治理高水位不晚于模型 window 的 80%，并为摘要输出、工具 schema 和响应保留空间
+- 旧的大型 tool_result 进入有界 `ToolResultArtifactStore`，消息历史保留协议安全占位符；`read_tool_artifact` 可按需恢复精确原文
+- 归档后仍超预算时，`ConversationHistoryCompactor` 在 user 边界保留近期完整事务，并用全量分块 + Reduce 生成结构化工程检查点
+- 查询相关记忆追加在当前 user turn，稳定 system prompt 与按名称排序的工具 schema 尽量保持 exact-prefix cache
+- window ≥ 32k 时自动把 MCP resources 的 URI / 描述索引注入当前 user turn 的动态上下文，不自动注入正文
+- 工具失败会返回稳定错误码、是否可重试、同签名尝试次数和针对性恢复建议；相同失败第二次要求换策略，第三次禁止原样重试
+- 复杂任务可维护会话内 TODO：清单作为下一轮 user turn 的外部工作记忆注入，底部状态栏展示完成摘要；不落盘、不进入长期记忆，`/clear` 会一并清理
+- 代码搜索结果统一使用 `/` 项目相对路径；`execute_command` 在 Windows 走 PowerShell、其他平台走 bash，并统一以 UTF-8 回收输出
 - inline 模式下 Token / cached input tokens / 估算成本 / 耗时进入底部状态栏，避免占用正文输出区
-- `/context` 会显示当前上下文模式、prompt cache 模式、RAG topK、resources 自动索引状态
+- `/context` 会分类显示 system、工具 schema、conversation 的估算占用，以及治理阈值、prompt cache 和 resources 索引状态
 
 ### 第十三期：Chrome DevTools MCP
 
@@ -195,8 +218,9 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 ### 第十九期：Prompt 分层架构（MVP）
 
 - ReAct、Plan task executor、Multi-Agent 三角色、Planner 的 system prompt 已从 Java 硬编码抽离到 `src/main/resources/prompts/`
-- `PromptAssembler` 按 `base -> personality -> mode -> approval -> runtime_context -> project_context -> skills -> context_mgmt -> handoff` 组装；`runtime_context` 注入当前日期/时区，动态项目上下文靠后注入
-- `project_context` 会先注入 `YUFORGE.md` 项目记忆，再注入 `/save` 检索到的相关长期记忆和 MCP resource 索引
+- `PromptAssembler` 的 system prompt 按 `base -> personality -> mode -> approval -> context_mgmt -> handoff -> project_context -> skills` 组装，保持连续稳定前缀
+- `RuntimeContextFormatter` 把时间戳、日期/时区、workspace、shell、MCP resource 索引和相关长期记忆统一放入当前 user turn；ReAct、Plan task、SubAgent 与 Planner 均接入
+- `ToolResultDiagnostic + ToolAttemptTracker + Tool Recovery` 构成失败恢复闭环：结构化错误、按规范化调用签名计数、第二次换策略、第三次停止原样重试；调用栈只进日志
 - 支持用户级覆盖 `~/.yuforge/prompts/...`，支持项目级覆盖 `.yuforge/prompts/...`，项目级优先级最高
 - 覆盖是整文件替换；`base.md` 和最终 prompt 必须包含 `## Language`
 - Prompt 改动审计模板见 `docs/prompt-analysis-template.md`
@@ -235,7 +259,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 - 微信侧使用 iLink `getupdates` 长轮询收消息、`sendmessage` 分片回消息，不依赖 SSE；这是独立通道，不是 Skill，也不是 Runtime API
 - 运行时只接受绑定用户私聊；普通消息单并发排队，`/help`、`/status`、`/pause`、`/resume`、`/stop` 走队列外控制路径
 - 微信侧用户消息会回显到 YuForge 终端 transcript；YuForge 终端继续显示 thinking / 工具调用过程，微信侧只接收 assistant 正文。iLink 协议层仍是 `text_item.text` 文本消息，没有显式 Markdown parse mode；YuForge 会保留 ClawBot 稳定支持的 Markdown 子集（列表、引用、粗体、行内代码、真实代码块），把标题转成粗体标题、把表格转成移动端更稳的键值/列表，并过滤图片 Markdown / H5-H6 / 中文斜体等兼容性差的标记；非代码类 fenced block（流程说明、长中文箭头链）会解包并换行，避免微信侧出现横向滚动代码块。iLink 不提供真正 SSE 或改单条消息能力。
-- 微信通道使用非交互式默认拒绝策略：只读工具默认允许，`write_file` / `create_project` 继续受 workspace PathGuard 限制，`execute_command` 必须精确命中命令白名单，`mcp__*` 必须命中 MCP 白名单，`revert_turn` 和浏览器会话切换默认拒绝
+- 微信通道使用非交互式默认拒绝策略：只读工具（含 `read_tool_artifact`）默认允许，`write_file` / `create_project` 继续受 workspace PathGuard 限制，`execute_command` 必须精确命中命令白名单，`mcp__*` 必须命中 MCP 白名单，`revert_turn` 和浏览器会话切换默认拒绝
 - 当前文本 MVP 会保留图片 / 文件消息的媒体元数据提示，但 CDN 下载解密、图片块输入和 `/send` 文件推送仍待后续媒体链路补齐
 
 ### 第六期 HITL 增强（路径围栏 / 命令快速拒绝 / 操作审计）
@@ -278,7 +302,7 @@ Tips for getting started:
 - 🛠️ 工具调用（文件操作、确定性代码搜索、Shell命令、项目创建、RAG 语义检索、联网搜索、MCP 动态工具）
 - 💬 交互式命令行界面
 - 📝 普通任务和斜杠命令提交后会先把本轮原始输入以 `>` 暗色整行块写回 transcript；输入态仍显示 `* `，单行提交只占一行，不额外追加空白行。普通任务随后再进入 Thinking / 工具调用，避免 dock 刷新或 activity 重绘后用户输入从可见历史里消失
-- 🧠 默认通过流式接口获取模型输出；inline ReAct 用固定高度 live thinking 区动态预览 reasoning，content / tool call 开始前清掉 live 区并把完整 reasoning 引用块落到 transcript，回答正文用低调标记起始；web_search / web_fetch 会在折叠头展示 query / URL，并在执行后输出一行结果摘要
+- 🧠 默认通过流式接口获取模型输出；inline ReAct 仅显示短暂的 Thinking 活动态和工具进度，不把 provider 原始 reasoning 写入 transcript，避免干扰最终回答。排障时可用 `-Dyuforge.render.show_reasoning=true` 或 `YUFORGE_RENDER_SHOW_REASONING=true` 显式开启；该开关不改变模型请求历史或日志。web_search / web_fetch 会在折叠头展示 query / URL，并在执行后输出一行结果摘要
 - 🖥️ 终端会对常见 Markdown（标题、列表、表格、代码块）做渲染后再显示；表格会按当前窗口宽度分配列宽，并在单元格内部换行，避免长 URL / 中文内容把列打散
 
 ### 第二期
@@ -399,6 +423,13 @@ export AGNES_BASE_URL=https://apihub.agnes-ai.com/v1
 代码索引默认保存在 `~/.yuforge/rag/codebase.db`。
 调试日志默认滚动写入 `~/.yuforge/logs/yuforge.log`，旧日志会按保留天数和总容量自动清理。
 ReAct / Plan task / SubAgent / Planner 的模型 `reasoning_content` 会以 `LLM reasoning [...]` 形式写入该日志，便于排查模型为什么选择某个工具或路径。
+
+终端默认不回显原始 `reasoning_content`。仅在本地排障时使用下列任一开关开启，避免把暂态推理混入正常会话记录：
+
+```bash
+java -Dyuforge.render.show_reasoning=true -jar target/yuforge-1.0-SNAPSHOT.jar
+# 或：YUFORGE_RENDER_SHOW_REASONING=true java -jar target/yuforge-1.0-SNAPSHOT.jar
+```
 
 如果你想为某次运行指定单独目录，可以额外传入：
 
@@ -621,21 +652,36 @@ I
 
 ## 可用工具
 
-- `read_file` - 读取文件内容
-- `write_file` - 写入文件内容
+- `read_file` - 读取文件内容；修改已有文件前先读目标区域，支持按行分段
+- `write_file` - 写入文件内容；写入后应通过测试、构建、诊断或再次读取验证
 - `list_dir` - 列出目录内容
 - `glob_files` - 按文件名 glob 实时查找项目内文件（只读，自动跳过常见构建/依赖目录）
 - `grep_code` - 按关键字或正则实时搜索项目内代码，优先使用 ripgrep，返回文件、行号、可选上下文、partial 状态与 suggested_reads
-- `execute_command` - 在当前项目目录执行短时 Shell 命令（默认 60 秒超时，黑名单拦截破坏性命令）
+- `execute_command` - 在当前项目目录执行短时 Shell 命令（默认 60 秒超时，黑名单拦截破坏性命令）；不用于绕过受控读/搜工具
 - `create_project` - 创建项目结构（java/python/node）
 - `search_code` - 语义检索代码库（自然语言查询，适合作为模糊语义或常规搜索无果时的辅助）
 - `web_search` - 搜索互联网获取实时信息
 - `web_fetch` - 抓取已知 URL 并提取正文 Markdown
+- `browser_connect` / `browser_disconnect` / `browser_status` - 按需管理本机 Chrome 登录态复用
+- `load_skill` - 加载已索引 Skill 的完整操作指引
+- `rewrite_todo_list` / `update_todo_status` - 维护复杂任务的会话内 TODO 工作记忆
+- `save_memory` - 在用户本轮明确要求保存稳定事实时写入长期记忆
 - `revert_turn` - 恢复到最近第 N 个 pre-turn 快照（走 HITL 与审计）
+- `read_tool_artifact` - 按 artifact_id 恢复被上下文治理归档的旧工具结果（只读、会话级）
 - `mcp__{server}__{tool}` - MCP server 动态提供的外部工具
 - `mcp__{server}__list_resources` / `mcp__{server}__read_resource` - 支持 resources 的 MCP server 自动注册的虚拟工具
 
 同一轮模型返回多个工具调用时，YuForge 会并行执行这些工具；如果工具之间有依赖关系，模型应分多轮调用。
+
+工具协作约束：代码探索遵循 `glob_files` → `grep_code` → `read_file`，已有文件修改遵循“定位 → 读取验证 → 写入 → 测试/构建/诊断/回读验证”。`execute_command` 只用于构建、测试、Git 状态和受控诊断，不得以 `grep` / `rg` / `find` / `cat` 绕过对应工具的路径围栏与结果预算；当前项目代码问题不应优先联网，`search_code` 仅用于语义模糊或常规搜索无果的辅助检索。
+
+工具卡片折叠展示调用对象；执行结束后 ReAct、Plan 与 Multi-Agent Worker 都会额外显示一行脱敏终态摘要（完成、失败、超时或取消及耗时）。原始工具输出只进入 Agent 上下文和调试日志，避免终端被大结果或敏感错误正文淹没。
+
+inline 底部状态栏按终端宽度分级：宽屏显示 MCP/Skill、模型、phase、ctx、调用量、缓存、成本、耗时与 cwd；中等宽度优先保留模型、phase、ctx 与耗时；窄屏只保留模式、模型、phase 和 ctx 百分比。布局使用终端列宽而不是 Java 字符串长度，避免中文路径或宽字符错位。
+
+流式代码块在生成时显示稳定的 `generating code` 提示，完成后追加可用 `Ctrl+O` 展开的折叠块；不会再用 ANSI 光标回退覆盖已输出 transcript，避免长代码、宽字符换行或异步消息污染终端 scrollback。
+
+ESC 语义按界面状态明确区分：输入期右提示显示 `Esc clear`，只清空当前编辑缓冲；Agent 运行期活动面板显示 `Esc cancel`，触发取消 token 并阻止后续 Agent 循环。已开始的网络 I/O 或工具执行会尽力中断，具体退出速度仍取决于 provider 与进程。
 
 文件类与代码检索工具（`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `create_project`）路径强制限定在项目根之内，越界请求会被策略层拒绝；`execute_command` 通过命令黑名单拦截 `sudo` / `rm -rf 全盘` / `mkfs` / `dd of=/dev` / fork bomb / `curl|sh` 等。`revert_turn` 会批量回写工作区，默认触发 HITL 和审计。所有 `mcp__` 前缀工具默认触发 HITL 和审计。详见 `/policy`。
 
@@ -688,6 +734,7 @@ I
 - `/search <查询>` - 语义检索代码（RAG 辅助路径）
 - `/graph <类名>` - 查看代码关系图谱
 - `/clear` - 清空当前对话历史、短期记忆、待注入 Skill 上下文和上一轮检索记忆注入；长期记忆保留
+- `/compact` - 立即把旧历史压缩为结构化工程检查点，保留最近 1 个 user 轮次
 - `/exit` / `/quit` - 退出程序
 
 ## 运行效果
@@ -772,7 +819,6 @@ src/main/java/com/yuforge
 │   ├── FreeLlmApiClient.java   # 本地 FreeLLMAPI OpenAI-compatible 网关客户端
 │   └── AgnesClient.java        # Agnes AI OpenAI-compatible 客户端
 ├── context/
-│   ├── ContextMode.java        # short / balanced / long 模式
 │   ├── ContextProfile.java     # 模型窗口与上下文策略
 │   └── TokenUsageFormatter.java # Token / cache / 成本展示
 ├── memory/
@@ -780,6 +826,8 @@ src/main/java/com/yuforge
 │   ├── ConversationMemory.java # 短期记忆
 │   ├── LongTermMemory.java     # 长期记忆
 │   ├── ContextCompressor.java  # 上下文压缩
+│   ├── ConversationHistoryCompactor.java # 实际 LLM 历史分层治理
+│   ├── ToolResultArtifactStore.java # 旧工具结果会话级归档与恢复
 │   ├── TokenBudget.java        # Token 预算管理
 │   ├── MemoryRetriever.java    # 记忆检索
 │   └── MemoryManager.java      # 记忆门面类

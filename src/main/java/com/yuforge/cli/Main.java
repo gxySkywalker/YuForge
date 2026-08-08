@@ -422,7 +422,7 @@ public class Main {
                         reactAgent.clearHistory();
                         hitlHandler.clearApprovedAll();
                         renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "idle"));
-                        ui.println("🗑️ 当前对话历史已清空，长期记忆保持不变\n");
+                        ui.println("🗑️ 当前对话、会话 TODO、工具归档已清空，长期记忆保持不变\n");
                         continue;
                     }
                     case COMPACT -> {
@@ -491,10 +491,12 @@ public class Main {
                         ui.println("📋 记忆系统状态：");
                         ui.println(reactAgent.getMemoryManager().getSystemStatus());
                         ui.println("   当前项目作用域: " + reactAgent.getMemoryManager().getCurrentProject());
-                        ui.println("   /memory list - 查看长期记忆");
+                        ui.println("   /memory list - 查看当前项目和 global 长期记忆");
                         ui.println("   /memory search <关键词> - 搜索当前项目可见长期记忆");
-                        ui.println("   /memory delete <id> - 删除单条长期记忆");
-                        ui.println("   /memory clear - 清空长期记忆");
+                        ui.println("   /memory delete <id> - 删除当前项目可见的单条长期记忆");
+                        ui.println("   /memory clear - 清空当前项目长期记忆");
+                        ui.println("   /memory clear --global - 清空 global 长期记忆");
+                        ui.println("   /memory clear --all - 清空所有长期记忆");
                         ui.println("   /save <事实> - 保存项目级长期记忆；/save --global <事实> 保存全局记忆");
                         ui.println();
                         continue;
@@ -528,8 +530,20 @@ public class Main {
                         continue;
                     }
                     case MEMORY_CLEAR -> {
-                        reactAgent.getMemoryManager().clearLongTerm();
-                        ui.println("🧹 长期记忆已清空\n");
+                        String scope = command.payload() == null ? "" : command.payload().trim().toLowerCase(Locale.ROOT);
+                        if (scope.isBlank()) {
+                            reactAgent.getMemoryManager().clearLongTerm();
+                            ui.println("🧹 已清空当前项目的长期记忆；global 记忆保持不变\n");
+                        } else if ("--global".equals(scope)) {
+                            reactAgent.getMemoryManager().clearGlobalLongTerm();
+                            ui.println("🧹 已清空 global 长期记忆\n");
+                        } else if ("--all".equals(scope)) {
+                            reactAgent.getMemoryManager().clearAllLongTerm();
+                            ui.println("🧹 已清空所有项目和 global 长期记忆\n");
+                        } else {
+                            ui.println("❌ 未知 /memory clear 参数: " + command.payload());
+                            ui.println("   用法: /memory clear | /memory clear --global | /memory clear --all\n");
+                        }
                         ui.println();
                         continue;
                     }
@@ -540,6 +554,47 @@ public class Main {
                         } else {
                             reactAgent.getMemoryManager().storeFact(saveRequest.fact(), saveRequest.scope());
                             ui.println("💾 已保存到长期记忆(" + saveRequest.scope() + "): " + saveRequest.fact() + "\n");
+                        }
+                        continue;
+                    }
+                    case SESSION -> {
+                        String payload = command.payload() == null ? "list" : command.payload().trim();
+                        if (payload.equalsIgnoreCase("save")) {
+                            Agent.SessionCheckpointResult result = reactAgent.saveSessionCheckpoint();
+                            if (result.succeeded()) {
+                                ui.println("💾 会话 checkpoint 已保存: " + result.sessionId()
+                                        + " (" + result.messageCount() + " 条消息)\n");
+                            } else {
+                                ui.println("❌ 保存 checkpoint 失败: " + result.error() + "\n");
+                            }
+                        } else if (payload.equalsIgnoreCase("list")) {
+                            try {
+                                List<com.yuforge.memory.SessionCheckpointStore.CheckpointSummary> sessions = reactAgent.listSessionCheckpoints(10);
+                                if (sessions.isEmpty()) {
+                                    ui.println("📭 暂无可恢复会话\n");
+                                } else {
+                                    ui.println("📋 最近可恢复会话：");
+                                    for (var session : sessions) {
+                                        ui.println("   " + session.id() + "  " + session.createdAt() + "  "
+                                                + session.messageCount() + " 条  " + session.model());
+                                    }
+                                    ui.println();
+                                }
+                            } catch (IOException e) {
+                                ui.println("❌ 读取会话列表失败: " + e.getMessage() + "\n");
+                            }
+                        } else if (payload.regionMatches(true, 0, "resume ", 0, 7)) {
+                            String sessionId = payload.substring(7).trim();
+                            Agent.SessionCheckpointResult result = reactAgent.resumeSessionCheckpoint(sessionId);
+                            if (result.succeeded()) {
+                                renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "idle"));
+                                ui.println("▶ 已恢复会话 " + result.sessionId() + " (" + result.messageCount()
+                                        + " 条消息)。旧 artifact 原文不会跨会话恢复。\n");
+                            } else {
+                                ui.println("❌ 恢复会话失败: " + result.error() + "\n");
+                            }
+                        } else {
+                            ui.println("❌ 未知 session 子命令。用法: /checkpoint | /session | /resume <session_id>\n");
                         }
                         continue;
                     }
@@ -1128,7 +1183,7 @@ public class Main {
                     token.cancel();
                     future.cancel(true);
                     executor.shutdownNow();
-                    return "⏹️ 已请求取消当前任务。";
+                    return "⏹️ 已请求取消：等待当前 I/O 退出，不会启动后续 Agent 循环。";
                 }
                 try {
                     return future.get(150, TimeUnit.MILLISECONDS);
@@ -1138,12 +1193,12 @@ public class Main {
             }
             return future.get();
         } catch (CancellationException e) {
-            return "⏹️ 已取消当前任务。";
+            return "⏹️ 当前任务已取消。";
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             token.cancel();
             future.cancel(true);
-            return "⏹️ 已取消当前任务。";
+            return "⏹️ 当前任务已取消。";
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             String message = cause == null || cause.getMessage() == null ? "未知错误" : cause.getMessage();
@@ -1559,6 +1614,9 @@ public class Main {
                 new SlashCommandHint("/task add ", "/task add <任务内容>", "提交后台任务"),
                 new SlashCommandHint("/task cancel ", "/task cancel <task_id>", "取消后台任务"),
                 new SlashCommandHint("/task log ", "/task log <task_id>", "查看后台任务结果"),
+                new SlashCommandHint("/checkpoint", "/checkpoint", "保存当前可恢复会话 checkpoint"),
+                new SlashCommandHint("/session", "/session", "查看最近可恢复会话"),
+                new SlashCommandHint("/resume ", "/resume <session_id>", "恢复当前项目的会话 checkpoint"),
                 new SlashCommandHint("/mcp", "/mcp", "查看 MCP server 状态"),
                 new SlashCommandHint("/mcp restart ", "/mcp restart <name>", "重启 MCP server"),
                 new SlashCommandHint("/mcp logs ", "/mcp logs <name>", "查看 MCP server 日志"),
@@ -1578,17 +1636,19 @@ public class Main {
                 new SlashCommandHint("/index ", "/index [路径]", "索引指定路径代码库"),
                 new SlashCommandHint("/search ", "/search <查询>", "语义检索代码（RAG 辅助）"),
                 new SlashCommandHint("/graph ", "/graph <类名>", "查看代码关系图谱"),
-                new SlashCommandHint("/clear", "/clear", "清空当前对话历史"),
+                new SlashCommandHint("/clear", "/clear", "清空当前对话、TODO 与工具归档"),
                 new SlashCommandHint("/compact", "/compact", "手动压缩当前对话历史"),
                 new SlashCommandHint("/init", "/init", "生成项目级记忆 YUFORGE.md"),
                 new SlashCommandHint("/init --force", "/init --force", "重写项目级记忆 YUFORGE.md"),
                 new SlashCommandHint("/history clear", "/history clear", "清空本机输入历史"),
                 new SlashCommandHint("/context", "/context", "查看上下文和记忆状态"),
                 new SlashCommandHint("/memory", "/memory", "查看记忆状态"),
-                new SlashCommandHint("/memory list", "/memory list", "查看长期记忆列表"),
+                new SlashCommandHint("/memory list", "/memory list", "查看当前项目和 global 长期记忆"),
                 new SlashCommandHint("/memory search ", "/memory search <关键词>", "搜索当前项目可见长期记忆"),
                 new SlashCommandHint("/memory delete ", "/memory delete <id>", "删除单条长期记忆"),
-                new SlashCommandHint("/memory clear", "/memory clear", "清空长期记忆"),
+                new SlashCommandHint("/memory clear", "/memory clear", "清空当前项目长期记忆"),
+                new SlashCommandHint("/memory clear --global", "/memory clear --global", "清空 global 长期记忆"),
+                new SlashCommandHint("/memory clear --all", "/memory clear --all", "清空所有长期记忆"),
                 new SlashCommandHint("/save ", "/save [--global] <事实内容>", "手动保存项目级或全局长期记忆"),
                 new SlashCommandHint("/skill", "/skill", "查看 skill 列表"),
                 new SlashCommandHint("/skill list", "/skill list", "查看 skill 列表"),

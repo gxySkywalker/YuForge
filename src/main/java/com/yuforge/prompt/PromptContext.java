@@ -48,11 +48,15 @@ public record PromptContext(
             return this;
         }
 
+        /** @deprecated 运行期记忆应由 RuntimeContextFormatter 放进当前 user turn。 */
+        @Deprecated
         public Builder memoryContext(String memoryContext) {
             this.memoryContext = normalize(memoryContext);
             return this;
         }
 
+        /** @deprecated MCP resource 等运行期上下文应由 RuntimeContextFormatter 放进当前 user turn。 */
+        @Deprecated
         public Builder externalContext(String externalContext) {
             this.externalContext = normalize(externalContext);
             return this;

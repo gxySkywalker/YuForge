@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,16 +28,38 @@ class PromptAssemblerTest {
                 .build());
 
         assertTrue(prompt.contains("## Language"));
-        assertTrue(prompt.contains("## Runtime Context"));
-        assertTrue(prompt.contains("当前日期"));
+        assertFalse(prompt.contains("## Runtime Context"));
+        assertFalse(prompt.contains("当前日期"));
         assertFalse(prompt.contains("## Freshness Policy（强制规则）"));
         assertFalse(prompt.contains("禁止**直接基于训练知识回答"));
         assertTrue(prompt.contains("## Mode: ReAct Agent"));
         assertTrue(prompt.contains("项目规则"));
-        assertTrue(prompt.contains("用户偏好中文"));
-        assertTrue(prompt.contains("demo://resource"));
+        assertFalse(prompt.contains("用户偏好中文"));
+        assertFalse(prompt.contains("demo://resource"));
         assertTrue(prompt.contains("web-access"));
-        assertTrue(prompt.indexOf("项目规则") < prompt.indexOf("用户偏好中文"));
+        assertTrue(prompt.indexOf("## Context Management") < prompt.indexOf("## Project Context"));
+        assertTrue(prompt.indexOf("## Handoff") < prompt.indexOf("## Project Context"));
+    }
+
+    @Test
+    void changingDynamicContextKeepsEntireStaticPrefixIdentical() {
+        PromptAssembler assembler = PromptAssembler.createDefault();
+
+        String first = assembler.assemble(PromptMode.AGENT, PromptContext.builder()
+                .projectMemoryContext("stable-project")
+                .memoryContext("memory-a")
+                .externalContext("resource-a")
+                .build());
+        String second = assembler.assemble(PromptMode.AGENT, PromptContext.builder()
+                .projectMemoryContext("stable-project")
+                .memoryContext("memory-b")
+                .externalContext("resource-b")
+                .build());
+
+        assertEquals(first, second,
+                "运行期 memory/MCP 变化不应改变 system prompt；它们由当前 user turn 注入");
+        assertTrue(first.indexOf("## Context Management") < first.indexOf("## Project Context"));
+        assertTrue(first.indexOf("## Handoff") < first.indexOf("## Project Context"));
     }
 
     @Test

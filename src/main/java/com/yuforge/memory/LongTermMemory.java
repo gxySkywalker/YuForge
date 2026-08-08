@@ -79,28 +79,33 @@ public class LongTermMemory implements Memory {
 
     public List<MemoryEntry> search(String query, int limit, String projectKey) {
         Set<String> queryTokens = MemoryQueryTokenizer.tokenize(query);
+        if (queryTokens.isEmpty() || limit <= 0) {
+            return List.of();
+        }
 
         return entries.values().stream()
                 .filter(entry -> isVisibleInProject(entry, projectKey))
-                .filter(entry -> {
-                    if (MemoryQueryTokenizer.matches(entry.getContent(), queryTokens)) {
-                        return true;
-                    }
-                    return entry.getMetadata().values().stream()
-                            .anyMatch(value -> MemoryQueryTokenizer.matches(value, queryTokens));
-                })
+                .map(entry -> new SearchMatch(entry, keywordMatchScore(entry, query, queryTokens)))
+                .filter(match -> match.score() > 0)
+                .sorted(Comparator.comparingDouble(SearchMatch::score).reversed()
+                        .thenComparing(match -> match.entry().getTimestamp(), Comparator.reverseOrder())
+                        .thenComparing(match -> match.entry().getId()))
                 .limit(limit)
+                .map(SearchMatch::entry)
                 .collect(Collectors.toList());
     }
 
     @Override
     public List<MemoryEntry> getAll() {
-        return new ArrayList<>(entries.values());
+        return entries.values().stream()
+                .sorted(entryComparator())
+                .collect(Collectors.toList());
     }
 
     public List<MemoryEntry> getAll(String projectKey) {
         return entries.values().stream()
                 .filter(entry -> isVisibleInProject(entry, projectKey))
+                .sorted(entryComparator())
                 .collect(Collectors.toList());
     }
 
@@ -119,6 +124,30 @@ public class LongTermMemory implements Memory {
     public void clear() {
         entries.clear();
         tokenCounter.set(0);
+        saveToDisk();
+    }
+
+    /** 清理一个项目的私有记忆；global 记忆不会受影响。 */
+    public void clearProject(String projectKey) {
+        if (projectKey == null || projectKey.isBlank()) {
+            return;
+        }
+        removeIf(entry -> "project".equals(scopeOf(entry))
+                && Objects.equals(projectKey, entry.getMetadata().get("project")));
+    }
+
+    /** 清理跨项目可见的 global 记忆。 */
+    public void clearGlobal() {
+        removeIf(entry -> "global".equals(scopeOf(entry)));
+    }
+
+    private void removeIf(java.util.function.Predicate<MemoryEntry> predicate) {
+        List<String> ids = entries.values().stream().filter(predicate).map(MemoryEntry::getId).toList();
+        if (ids.isEmpty()) return;
+        for (String id : ids) {
+            MemoryEntry removed = entries.remove(id);
+            if (removed != null) tokenCounter.addAndGet(-removed.getTokenCount());
+        }
         saveToDisk();
     }
 
@@ -164,6 +193,7 @@ public class LongTermMemory implements Memory {
     private void saveToDisk() {
         try {
             List<Map<String, Object>> dataList = entries.values().stream()
+                    .sorted(entryComparator())
                     .map(this::entryToMap)
                     .collect(Collectors.toList());
             mapper.writeValue(storageFile, dataList);
@@ -252,4 +282,34 @@ public class LongTermMemory implements Memory {
                 typeCounts.getOrDefault(MemoryEntry.MemoryType.SUMMARY, 0L),
                 typeCounts.getOrDefault(MemoryEntry.MemoryType.TOOL_RESULT, 0L));
     }
+
+    private static double keywordMatchScore(MemoryEntry entry, String query, Set<String> queryTokens) {
+        String content = entry.getContent();
+        if (content != null && query != null && content.toLowerCase(Locale.ROOT).contains(query.trim().toLowerCase(Locale.ROOT))) {
+            return 1.0;
+        }
+
+        int contentMatches = countMatches(content, queryTokens);
+        int metadataMatches = entry.getMetadata().values().stream()
+                .mapToInt(value -> countMatches(value, queryTokens))
+                .sum();
+        if (contentMatches == 0 && metadataMatches == 0) {
+            return 0;
+        }
+        // 内容命中比元数据命中更可信；元数据只作为同类结果的轻量加权。
+        return Math.min(0.99, (double) contentMatches / queryTokens.size() + (metadataMatches > 0 ? 0.08 : 0));
+    }
+
+    private static int countMatches(String text, Set<String> queryTokens) {
+        if (text == null || text.isBlank()) return 0;
+        String normalized = text.toLowerCase(Locale.ROOT);
+        return (int) queryTokens.stream().filter(normalized::contains).count();
+    }
+
+    private static Comparator<MemoryEntry> entryComparator() {
+        return Comparator.comparing(MemoryEntry::getTimestamp, Comparator.reverseOrder())
+                .thenComparing(MemoryEntry::getId);
+    }
+
+    private record SearchMatch(MemoryEntry entry, double score) {}
 }

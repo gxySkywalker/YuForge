@@ -7,12 +7,15 @@ import com.yuforge.llm.LlmTraceLogger;
 import com.yuforge.lsp.LspDiagnosticReport;
 import com.yuforge.memory.ConversationHistoryCompactor;
 import com.yuforge.memory.MemoryManager;
+import com.yuforge.memory.TokenBudget;
 import com.yuforge.plan.*;
 import com.yuforge.prompt.PromptAssembler;
 import com.yuforge.prompt.PromptContext;
 import com.yuforge.prompt.PromptMode;
 import com.yuforge.prompt.ProjectMemoryLoader;
+import com.yuforge.prompt.RuntimeContextFormatter;
 import com.yuforge.runtime.CancellationContext;
+import com.yuforge.render.ReasoningDisplayPolicy;
 import com.yuforge.skill.SkillContextBuffer;
 import com.yuforge.skill.SkillIndexFormatter;
 import com.yuforge.skill.SkillRegistry;
@@ -111,6 +114,7 @@ public class PlanExecuteAgent {
     private SkillRegistry skillRegistry;
     private SkillContextBuffer skillContextBuffer;
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
+    private final RuntimeContextFormatter runtimeContextFormatter = RuntimeContextFormatter.systemDefault();
 
     public PlanExecuteAgent(LlmClient llmClient) {
         this(llmClient, (goal, plan) -> PlanReviewDecision.execute());
@@ -144,12 +148,14 @@ public class PlanExecuteAgent {
         this.planner = planner != null ? planner : new Planner(llmClient, this.out);
         this.reviewHandler = reviewHandler == null ? (goal, plan) -> PlanReviewDecision.execute() : reviewHandler;
         this.memoryManager = memoryManager != null ? memoryManager : new MemoryManager(llmClient);
-        this.historyCompactor = new ConversationHistoryCompactor(llmClient);
+        this.historyCompactor = new ConversationHistoryCompactor(
+                llmClient, toolRegistry.getToolResultArtifactStore());
         this.toolRegistry.setContextProfile(this.memoryManager.getContextProfile());
         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
         this.memoryManager.setProjectPath(this.toolRegistry.getProjectPath());
         this.toolRegistry.setScopedMemorySaver(this.memoryManager::storeFact);
         this.planner.setProjectMemorySupplier(this::buildProjectMemoryContext);
+        this.planner.setWorkspacePath(Path.of(this.toolRegistry.getProjectPath()));
     }
 
     private static PrintStream deferredSystemOut() {
@@ -185,11 +191,17 @@ public class PlanExecuteAgent {
 
     private void maybeCompactHistory(List<LlmClient.Message> messages, PrintStream out) {
         if (historyCompactor == null) return;
-        int trigger = memoryManager.getContextProfile().compressionTriggerTokens();
+        int toolDefinitionTokens = llmClient.supportsTools()
+                ? TokenBudget.estimateToolDefinitionTokens(toolRegistry.getToolDefinitions()) : 0;
+        int trigger = Math.max(1_000,
+                memoryManager.getContextProfile().compressionTriggerTokens() - toolDefinitionTokens);
         try {
-            boolean compacted = historyCompactor.compactIfNeeded(messages, trigger);
-            if (compacted && out != null) {
-                out.println("📦 上下文接近窗口上限，已把早期对话压缩为摘要后继续。");
+            ConversationHistoryCompactor.ContextManagementResult result =
+                    historyCompactor.manageIfNeeded(messages, trigger);
+            if (result.compacted() && out != null) {
+                out.println("📦 上下文接近窗口上限，已把早期对话压缩为结构化检查点后继续。");
+            } else if (result.archivedToolResults() > 0 && out != null) {
+                out.println("📦 已归档 " + result.archivedToolResults() + " 个旧工具结果，可按 artifact_id 恢复。");
             }
         } catch (Exception e) {
             log.warn("conversationHistory compaction failed", e);
@@ -220,6 +232,7 @@ public class PlanExecuteAgent {
      */
     public String run(String userInput) {
         log.info("Plan run started: inputLength={}", userInput == null ? 0 : userInput.length());
+        toolRegistry.setMemoryWriteAuthorization(userInput);
         memoryManager.addUserMessage(userInput);
         StreamState streamState = new StreamState();
         try {
@@ -445,7 +458,6 @@ public class PlanExecuteAgent {
                 .projectMemoryContext(buildProjectMemoryContext())
                 .variable("taskType", task.getType())
                 .variable("taskDescription", task.getDescription())
-                .externalContext(buildExternalContext())
                 .skillIndex(buildSkillIndex())
                 .toolsEnabled(llmClient == null || llmClient.supportsTools())
                 .build());
@@ -455,10 +467,13 @@ public class PlanExecuteAgent {
                 task.getDescription(),
                 memoryManager.getContextProfile().memoryContextTokens());
         String taskInput = buildTaskContext(goal, plan, task);
-        if (!memoryContext.isEmpty()) {
-            taskInput = taskInput + "\n\n" + memoryContext;
-        }
         taskInput = prependSkillBodies(taskInput);
+        taskInput = runtimeContextFormatter.prepend(
+                taskInput,
+                Path.of(toolRegistry.getProjectPath()),
+                toolRegistry.getCommandShell(),
+                "task_id: " + task.getId() + "\ntask_status: running",
+                buildTurnDynamicContext(memoryContext));
 
         List<LlmClient.Message> messages = new ArrayList<>(Arrays.asList(
                 LlmClient.Message.system(prompt),
@@ -470,6 +485,7 @@ public class PlanExecuteAgent {
         StringBuilder allResults = new StringBuilder();
         int iteration = 0;
         TaskStreamRenderer streamRenderer = new TaskStreamRenderer(task.getId(), streamState, out);
+        ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
 
         int totalInputTokens = 0;
         int totalOutputTokens = 0;
@@ -540,11 +556,12 @@ public class PlanExecuteAgent {
             // 被 HITL 提示"跨过"导致 🧠 / 🤖 标题与内容错位
             streamRenderer.resetBetweenIterations();
 
-            List<ToolExecutionResult> toolResults = executeToolCalls(task.getId(), response.toolCalls());
+            List<ToolExecutionResult> toolResults = executeToolCalls(task.getId(), response.toolCalls(), out);
             for (ToolExecutionResult toolResult : toolResults) {
                 memoryManager.addToolResult(toolResult.name(), toolResult.result());
                 allResults.append(toolResult.result()).append("\n");
-                messages.add(LlmClient.Message.tool(toolResult.id(), toolResult.result()));
+                ToolAttemptTracker.Observation observation = attemptTracker.observe(toolResult);
+                messages.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
             }
             appendImageToolMessages(messages, toolResults);
         }
@@ -568,6 +585,21 @@ public class PlanExecuteAgent {
             log.warn("Failed to build external context for plan task", e);
             return "";
         }
+    }
+
+    private String buildTurnDynamicContext(String memoryContext) {
+        StringBuilder context = new StringBuilder();
+        if (memoryContext != null && !memoryContext.isBlank()) {
+            context.append("<relevant-memory>\n")
+                    .append(memoryContext.trim())
+                    .append("\n</relevant-memory>");
+        }
+        String externalContext = buildExternalContext();
+        if (!externalContext.isBlank()) {
+            if (!context.isEmpty()) context.append("\n\n");
+            context.append(externalContext);
+        }
+        return context.toString();
     }
 
     private String buildProjectMemoryContext() {
@@ -600,7 +632,7 @@ public class PlanExecuteAgent {
         return normalized.substring(0, maxLength) + "...";
     }
 
-    private List<ToolExecutionResult> executeToolCalls(String taskId, List<LlmClient.ToolCall> toolCalls) {
+    private List<ToolExecutionResult> executeToolCalls(String taskId, List<LlmClient.ToolCall> toolCalls, PrintStream out) {
         List<ToolInvocation> invocations = new ArrayList<>();
         for (LlmClient.ToolCall toolCall : toolCalls) {
             String toolName = toolCall.function().name();
@@ -616,6 +648,12 @@ public class PlanExecuteAgent {
         List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
         for (ToolExecutionResult result : results) {
             log.debug("Task {} tool result preview [{}]: {}", taskId, result.name(), preview(result.result(), 300));
+            if (out != null) {
+                String summary = ToolResultSummary.format(result);
+                if (!summary.isBlank()) {
+                    out.println(AnsiStyle.subtle("  → " + summary));
+                }
+            }
         }
         return results;
     }
@@ -738,6 +776,9 @@ public class PlanExecuteAgent {
             if (delta == null || delta.isEmpty()) {
                 return;
             }
+            if (!ReasoningDisplayPolicy.showRawReasoning()) {
+                return;
+            }
             if (contentStarted) {
                 lateReasoning.append(delta);
                 return;
@@ -829,6 +870,10 @@ public class PlanExecuteAgent {
         }
 
         private void flushLateReasoning() {
+            if (!ReasoningDisplayPolicy.showRawReasoning()) {
+                lateReasoning.setLength(0);
+                return;
+            }
             String late = lateReasoning.toString().trim();
             if (late.isEmpty()) {
                 lateReasoning.setLength(0);

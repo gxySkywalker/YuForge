@@ -9,7 +9,7 @@ import com.yuforge.llm.LlmClient;
  * 全模型走同一套行为，只是 window 大小不同导致触发时机和容量不同。
  *
  * 全局常量：
- * - 压缩触发阈值：预留摘要输出空间后，再保留 13k token 自动压缩缓冲
+ * - 压缩触发阈值：预留摘要输出空间和 13k 安全缓冲，同时不晚于窗口的 80%
  *
  * 按 window 派生：
  * - 短期记忆预算 = window × 0.45
@@ -29,6 +29,7 @@ public record ContextProfile(
     public static final int MAX_SUMMARY_OUTPUT_RESERVE_TOKENS = 20_000;
     public static final int AUTOCOMPACT_BUFFER_TOKENS = 13_000;
     public static final double MIN_COMPRESSION_TRIGGER_RATIO = 0.50;
+    public static final double MAX_COMPRESSION_TRIGGER_RATIO = 0.80;
     private static final int MIN_WINDOW = 8_000;
     private static final int MCP_RESOURCE_INDEX_MIN_WINDOW = 32_000;
 
@@ -96,7 +97,9 @@ public record ContextProfile(
         int safeWindow = Math.max(MIN_WINDOW, window);
         int summaryReserve = Math.min(MAX_SUMMARY_OUTPUT_RESERVE_TOKENS, Math.max(1_000, safeWindow / 4));
         int buffer = Math.min(AUTOCOMPACT_BUFFER_TOKENS, Math.max(1_000, safeWindow / 8));
-        int trigger = safeWindow - summaryReserve - buffer;
+        int reservedTrigger = safeWindow - summaryReserve - buffer;
+        int highWatermark = (int) Math.floor(safeWindow * MAX_COMPRESSION_TRIGGER_RATIO);
+        int trigger = Math.min(reservedTrigger, highWatermark);
         return Math.max(1_000, Math.min(safeWindow - 1, trigger));
     }
 }

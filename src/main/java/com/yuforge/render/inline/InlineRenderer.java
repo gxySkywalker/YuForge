@@ -4,6 +4,7 @@ import com.yuforge.hitl.ApprovalRequest;
 import com.yuforge.hitl.ApprovalResult;
 import com.yuforge.llm.LlmClient;
 import com.yuforge.render.PlainRenderer;
+import com.yuforge.render.ReasoningDisplayPolicy;
 import com.yuforge.render.Renderer;
 import com.yuforge.render.StatusInfo;
 import com.yuforge.util.AnsiStyle;
@@ -51,8 +52,6 @@ public final class InlineRenderer implements Renderer {
     private boolean inCodeBlock;
     private String codeLanguage = "";
     private String codeHeaderLine;
-    private int codeStartTranscriptIndex = -1;
-    private boolean codeHeaderEmitted;
 
     public InlineRenderer(Terminal terminal) {
         this(terminal, System.out);
@@ -83,8 +82,6 @@ public final class InlineRenderer implements Renderer {
             codeBodyLines.clear();
             codeLanguage = "";
             codeHeaderLine = null;
-            codeStartTranscriptIndex = -1;
-            codeHeaderEmitted = false;
         }
         blockRegistry.clear();
     }
@@ -122,7 +119,7 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public String inputRightPrompt() {
-        return "message / @path / @image";
+        return "message / @path / @image · Esc clear";
     }
 
     @Override
@@ -153,6 +150,11 @@ public final class InlineRenderer implements Renderer {
     @Override
     public boolean supportsThinkingPanel() {
         return activityDisplay != null;
+    }
+
+    @Override
+    public boolean rendersReasoning() {
+        return ReasoningDisplayPolicy.showRawReasoning();
     }
 
     @Override
@@ -370,12 +372,9 @@ public final class InlineRenderer implements Renderer {
 
     /**
      * 行级状态机：检测 {@code ┌─ code:} / {@code └─ end} 边界，把整段代码块换成
-     * {@link FoldableBlock}。代码体在流式期间不写到终端（避免大段文本刷屏），
-     * 等 {@code └─ end} 到达后用 {@code [<n>A[J} 回退覆盖原 header 行 + 输出折叠头。
-     *
-     * <p>已知小瑕疵：代码块流式期间用户按 Ctrl+O 触发 {@link #redrawTranscript()} 会
-     * 看到 header 行被重新渲染但 body 行尚未在 transcript 里——属于罕见时序，
-     * 下一次 LLM 输出 / `/clear` / 退出可恢复。
+     * {@link FoldableBlock}。代码体在流式期间不写到终端（避免大段文本刷屏）；起始时
+     * 追加稳定的“生成中”文本，结束时再追加折叠块。这里不回退或覆盖任何已写出的行，
+     * 因此长代码、宽字符换行和异步输出不会破坏 scrollback。
      */
     private void feedWithCodeBlockDetection(String text) {
         for (int i = 0; i < text.length(); i++) {
@@ -393,19 +392,17 @@ public final class InlineRenderer implements Renderer {
         String stripped = stripAnsi(line).trim();
 
         if (!inCodeBlock && stripped.startsWith("┌─ code")) {
-            // 进入代码块：写出 header，记录 transcript 位置，body 之后会被吞掉
+            // 进入代码块：写出稳定提示，body 之后会被缓冲，不使用光标回退替换该提示。
             inCodeBlock = true;
             int colon = stripped.indexOf(':');
             codeLanguage = colon >= 0 ? stripped.substring(colon + 1).trim() : "";
             codeHeaderLine = stripTrailingNewline(line);
             codeBodyLines.clear();
-            codeStartTranscriptIndex = transcript.size();
-            codeHeaderEmitted = activePrintAboveReader() == null;
-            if (codeHeaderEmitted) {
-                emit(line);
-                transcript.add(new TextEntry(line));
-                renderedRows += estimateRows(line);
-            }
+            String label = codeLanguage.isEmpty() ? "code" : "code: " + codeLanguage;
+            String pending = AnsiStyle.subtle("  ⏳ generating " + label + "...\n");
+            emit(pending);
+            transcript.add(new TextEntry(pending));
+            renderedRows += estimateRows(pending);
             return;
         }
 
@@ -413,14 +410,6 @@ public final class InlineRenderer implements Renderer {
             if (stripped.startsWith("└─ end")) {
                 int bodyLineCount = codeBodyLines.size();
                 inCodeBlock = false;
-
-                if (codeHeaderEmitted) {
-                    // 用 ANSI move-up + clear-to-eos 覆盖原 header 行。这里必须直写
-                    // 底层输出，因为 printAbove 是追加式输出，不适合承载光标回退。
-                    out.print(AnsiSeq.moveUp(1));
-                    out.print("\r");
-                    out.print(AnsiSeq.CLEAR_TO_EOS);
-                }
 
                 String label = codeLanguage.isEmpty() ? "code" : "code: " + codeLanguage;
                 String collapsedHeader = AnsiStyle.subtle(
@@ -436,28 +425,12 @@ public final class InlineRenderer implements Renderer {
                 FoldableBlock block = new FoldableBlock(out, collapsedHeader, expandedLines, "⏷ collapse (ctrl+o)");
                 blockRegistry.register(block);
 
-                if (codeStartTranscriptIndex >= 0 && codeStartTranscriptIndex < transcript.size()) {
-                    transcript.set(codeStartTranscriptIndex, new BlockEntry(block));
-                } else {
-                    transcript.add(new BlockEntry(block));
-                }
-
-                if (codeHeaderEmitted) {
-                    out.print(collapsedHeader);
-                    out.print("\n");
-                    out.flush();
-                } else {
-                    emit(collapsedHeader + "\n");
-                }
-
-                // renderedRows 调整：移除原 header 占位（约 1 行），加入折叠头占位
-                renderedRows = Math.max(0, renderedRows - estimateRows(codeHeaderLine + "\n"));
+                transcript.add(new BlockEntry(block));
+                emit(collapsedHeader + "\n");
                 renderedRows += estimateRows(collapsedHeader + "\n");
 
                 codeBodyLines.clear();
                 codeHeaderLine = null;
-                codeStartTranscriptIndex = -1;
-                codeHeaderEmitted = false;
                 return;
             }
             // body 行：缓冲，不写终端、不入 transcript

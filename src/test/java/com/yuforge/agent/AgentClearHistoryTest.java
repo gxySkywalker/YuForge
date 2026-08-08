@@ -36,11 +36,14 @@ class AgentClearHistoryTest {
 
             agent.run("CLEAR_MARKER");
 
-            assertTrue(llmClient.firstSystemPrompt().contains("CLEAR_MARKER"),
-                    "sanity check: the first turn should inject query-specific long-term memory");
+            assertFalse(llmClient.firstSystemPrompt().contains("CLEAR_MARKER"),
+                    "query-specific memory must not rewrite the stable system prefix");
+            assertTrue(llmClient.firstUserMessage().contains("CLEAR_MARKER"),
+                    "retrieved memory should be appended with the current user turn");
             long beforeClearTokens = agent.currentStatus("idle").totalTokens();
 
             skillContextBuffer.push("demo", "pending skill body");
+            agent.getToolRegistry().getToolResultArtifactStore().archive("read_file", "call_1", "sensitive tool output");
             agent.clearHistory();
 
             List<LlmClient.Message> history = agent.getConversationHistory();
@@ -49,6 +52,8 @@ class AgentClearHistoryTest {
                     "/clear must not preserve the previous query's retrieved memory in system prompt");
             assertFalse(history.get(0).content().contains("## 相关长期记忆"));
             assertEquals("", skillContextBuffer.drain(), "/clear should drop pending skill injection");
+            assertEquals(0, agent.getToolRegistry().getToolResultArtifactStore().size(),
+                    "/clear should drop recoverable tool artifacts from the previous conversation");
             assertTrue(agent.currentStatus("idle").totalTokens() < beforeClearTokens,
                     "status ctx should reflect the cleared conversation instead of the previous LLM usage");
         } finally {
@@ -100,6 +105,14 @@ class AgentClearHistoryTest {
 
         private String firstSystemPrompt() {
             return capturedMessages.get(0).get(0).content();
+        }
+
+        private String firstUserMessage() {
+            return capturedMessages.get(0).stream()
+                    .filter(message -> "user".equals(message.role()))
+                    .findFirst()
+                    .orElseThrow()
+                    .content();
         }
     }
 }

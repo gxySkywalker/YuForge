@@ -8,6 +8,7 @@ import com.yuforge.prompt.PromptAssembler;
 import com.yuforge.prompt.PromptContext;
 import com.yuforge.prompt.PromptMode;
 import com.yuforge.prompt.ProjectMemoryLoader;
+import com.yuforge.prompt.RuntimeContextFormatter;
 import com.yuforge.util.AnsiStyle;
 import com.yuforge.util.TerminalMarkdownRenderer;
 import org.slf4j.Logger;
@@ -29,6 +30,8 @@ public class Planner {
     private final PrintStream out;
     private final ObjectMapper mapper = new ObjectMapper();
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
+    private final RuntimeContextFormatter runtimeContextFormatter = RuntimeContextFormatter.systemDefault();
+    private Path workspacePath = Path.of(".").toAbsolutePath().normalize();
     private Supplier<String> projectMemorySupplier = () ->
             ProjectMemoryLoader.createDefault(Path.of(".").toAbsolutePath().normalize()).loadForPrompt();
 
@@ -43,6 +46,12 @@ public class Planner {
 
     public void setProjectMemorySupplier(Supplier<String> projectMemorySupplier) {
         this.projectMemorySupplier = projectMemorySupplier == null ? () -> "" : projectMemorySupplier;
+    }
+
+    public void setWorkspacePath(Path workspacePath) {
+        if (workspacePath != null) {
+            this.workspacePath = workspacePath.toAbsolutePath().normalize();
+        }
     }
 
     /**
@@ -60,7 +69,13 @@ public class Planner {
                 LlmClient.Message.system(promptAssembler.assemble(PromptMode.PLANNER, PromptContext.builder()
                         .projectMemoryContext(buildProjectMemoryContext())
                         .build())),
-                LlmClient.Message.user("请为以下任务制定执行计划：\n" + goal)
+                LlmClient.Message.user(runtimeContextFormatter.prepend(
+                        "请为以下任务制定执行计划：\n" + goal,
+                        workspacePath,
+                        System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
+                                ? "powershell" : "bash",
+                        "phase: planning",
+                        ""))
         );
 
         // 调用LLM生成计划

@@ -146,7 +146,8 @@ class HitlToolRegistryTest {
         String result = registry.executeTool("mcp__chrome-devtools__navigate_page",
                 "{\"url\":\"https://example.com\"}");
 
-        assertEquals("navigated", result);
+        assertTrue(result.contains("navigated"));
+        assertTrue(result.contains("untrusted_external_content"));
         assertEquals(1, stub.requestCount());
     }
 
@@ -161,7 +162,8 @@ class HitlToolRegistryTest {
 
         String result = registry.executeTool("mcp__chrome-devtools__click", "{\"uid\":\"1\"}");
 
-        assertEquals("clicked", result);
+        assertTrue(result.contains("clicked"));
+        assertTrue(result.contains("untrusted_external_content"));
         assertEquals(0, stub.requestCount());
     }
 
@@ -180,7 +182,8 @@ class HitlToolRegistryTest {
 
         String result = registry.executeTool("mcp__chrome-devtools__click", "{\"uid\":\"1\"}");
 
-        assertEquals("clicked", result);
+        assertTrue(result.contains("clicked"));
+        assertTrue(result.contains("untrusted_external_content"));
         assertEquals(1, stub.requestCount());
         assertNotNull(stub.received.get(0).sensitiveNotice());
     }
@@ -195,6 +198,23 @@ class HitlToolRegistryTest {
         String result = registry.executeTool("list_dir", "{\"path\":\".\"}");
         assertFalse(result.startsWith("[HITL]"));
         assertEquals(0, stub.requestCount());
+    }
+
+    @Test
+    void untrustedContentForcesPerCallApprovalEvenWhenHitlIsDisabled(@TempDir Path tempDir) {
+        StubHandler stub = new StubHandler(req -> ApprovalResult.reject("external content is untrusted"));
+        stub.setEnabled(false);
+        HitlToolRegistry registry = new HitlToolRegistry(stub);
+        registry.setProjectPath(tempDir.toString());
+        registerMcpTool(registry, "external", "read", args -> "网页正文");
+
+        registry.executeTool("mcp__external__read", "{}");
+        String result = registry.executeTool("write_file", "{\"path\":\"blocked.txt\",\"content\":\"x\"}");
+
+        assertTrue(result.startsWith("[HITL]"), result);
+        assertEquals(1, stub.requestCount());
+        assertTrue(stub.received.get(0).sensitiveNotice().contains("不可信网页或 MCP 内容"));
+        assertFalse(Files.exists(tempDir.resolve("blocked.txt")));
     }
 
     /** 可预设决策结果的 HitlHandler stub。 */

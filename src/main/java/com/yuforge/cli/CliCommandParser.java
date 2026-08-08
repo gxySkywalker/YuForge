@@ -39,6 +39,7 @@ final class CliCommandParser {
         BROWSER,
         WECHAT,
         TASK,
+        SESSION,
         SKILL_LIST,
         SKILL_SHOW,
         SKILL_ON,
@@ -140,6 +141,14 @@ final class CliCommandParser {
 
         if (trimmed.equalsIgnoreCase("/memory clear") || trimmed.equalsIgnoreCase("/mem clear")) {
             return new ParsedCommand(CommandType.MEMORY_CLEAR, null);
+        }
+
+        if (trimmed.regionMatches(true, 0, "/memory clear ", 0, 14)) {
+            return new ParsedCommand(CommandType.MEMORY_CLEAR, trimmed.substring(14).trim());
+        }
+
+        if (trimmed.regionMatches(true, 0, "/mem clear ", 0, 11)) {
+            return new ParsedCommand(CommandType.MEMORY_CLEAR, trimmed.substring(11).trim());
         }
 
         if (trimmed.equalsIgnoreCase("/memory list") || trimmed.equalsIgnoreCase("/mem list")) {
@@ -256,6 +265,22 @@ final class CliCommandParser {
 
         if (trimmed.regionMatches(true, 0, "/task ", 0, 6)) {
             return new ParsedCommand(CommandType.TASK, trimmed.substring(6).trim());
+        }
+
+        if (trimmed.equalsIgnoreCase("/checkpoint")) {
+            return new ParsedCommand(CommandType.SESSION, "save");
+        }
+
+        if (trimmed.equalsIgnoreCase("/session")) {
+            return new ParsedCommand(CommandType.SESSION, "list");
+        }
+
+        if (trimmed.regionMatches(true, 0, "/session ", 0, 9)) {
+            return new ParsedCommand(CommandType.SESSION, trimmed.substring(9).trim());
+        }
+
+        if (trimmed.regionMatches(true, 0, "/resume ", 0, 8)) {
+            return new ParsedCommand(CommandType.SESSION, "resume " + trimmed.substring(8).trim());
         }
 
         if (trimmed.equalsIgnoreCase("/skill") || trimmed.equalsIgnoreCase("/skill list")) {

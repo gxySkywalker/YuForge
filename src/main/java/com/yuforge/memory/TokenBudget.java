@@ -140,6 +140,25 @@ public class TokenBudget {
         return total;
     }
 
+    /** 与消息估算使用同一套启发式，供上下文组件统一统计纯文本。 */
+    public static int estimateTextTokens(String text) {
+        return MemoryEntry.estimateTokens(text);
+    }
+
+    /** 工具定义同样占据请求上下文，不能只统计 conversationHistory。 */
+    public static int estimateToolDefinitionTokens(List<LlmClient.Tool> tools) {
+        if (tools == null || tools.isEmpty()) return 0;
+        int total = 0;
+        for (LlmClient.Tool tool : tools) {
+            if (tool == null) continue;
+            total += estimateTextTokens(tool.name());
+            total += estimateTextTokens(tool.description());
+            total += estimateTextTokens(tool.parameters() == null ? "" : tool.parameters().toString());
+            total += 8;
+        }
+        return total;
+    }
+
     private static int estimateImageTokens(LlmClient.ContentPart part) {
         if (part.imageBase64() != null && !part.imageBase64().isBlank()) {
             int bytes = (int) (part.imageBase64().length() * 3L / 4L);

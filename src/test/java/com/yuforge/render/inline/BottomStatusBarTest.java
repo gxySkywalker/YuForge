@@ -86,6 +86,34 @@ class BottomStatusBarTest {
     }
 
     @Test
+    void compactFooterPrioritizesModelPhaseAndContextOverUsageAndCost() {
+        StatusInfo info = StatusInfo.tokens("very-long-model-name-for-a-narrow-terminal", 200_000L, 12_000L,
+                8_000L, 500L, 100L, "¥0.0123", false, 1500L, "running-long-phase");
+
+        String line = BottomStatusBar.formatFooterLine(info, 60);
+
+        assertTrue(line.contains("Auto Model"), line);
+        assertTrue(line.contains("ctx 6%"), line);
+        assertFalse(line.contains("in "), line);
+        assertFalse(line.contains("¥0.0123"), line);
+        assertFalse(line.contains("("), line);
+    }
+
+    @Test
+    void statusLineUsesColumnWidthForWideCharacters() {
+        StatusInfo info = StatusInfo.active("glm-5.1", 200_000L, false, "运行中")
+                .withEnvironment("MCP 1/1", "Skill 1/1");
+
+        var statusLine = BottomStatusBar.formatStatusLineAttributed(info, 80);
+        String footerLine = BottomStatusBar.formatFooterLine(info, 80);
+
+        assertEquals(80, statusLine.columnLength());
+        assertTrue(statusLine.toString().contains("YOLO"), statusLine.toString());
+        assertEquals(80, new org.jline.utils.AttributedString(footerLine).columnLength());
+        assertTrue(footerLine.contains("运行中"), footerLine);
+    }
+
+    @Test
     void activeStatusLineShowsPhase() {
         StatusInfo info = StatusInfo.active("glm-5.1", 200_000L, false, "plan")
                 .withEnvironment("MCP 4/4", "Skill 2/2");

@@ -34,6 +34,17 @@ public class HitlToolRegistry extends ToolRegistry {
 
     @Override
     public ToolOutput executeToolOutput(String name, String argumentsJson) {
+        if (requiresExternalContentApproval(name)) {
+            BrowserCheckResult browserCheck = checkBrowserTool(name, argumentsJson, true);
+            if (browserCheck.blocked()) {
+                return super.doExecuteTool(name, argumentsJson);
+            }
+            String notice = "本轮已读取不可信网页或 MCP 内容；即使常规 HITL 已关闭，此副作用操作也必须逐次确认。";
+            if (browserCheck.requiresPerCallApproval()) {
+                notice += " " + browserCheck.sensitiveNotice();
+            }
+            return executeAfterExplicitApproval(name, argumentsJson, notice);
+        }
         // HITL 未启用或该工具不需要审批，直接执行
         if (!hitlHandler.isEnabled() || !ApprovalPolicy.requiresApproval(name)) {
             return super.doExecuteTool(name, argumentsJson);
@@ -51,6 +62,13 @@ public class HitlToolRegistry extends ToolRegistry {
         }
 
         return executeAfterExplicitApproval(name, argumentsJson, null);
+    }
+
+    private boolean requiresExternalContentApproval(String toolName) {
+        if (!hasUntrustedContentObserved()) {
+            return false;
+        }
+        return ApprovalPolicy.requiresApproval(toolName) || "save_memory".equals(toolName);
     }
 
     private ToolOutput executeAfterExplicitApproval(String name, String argumentsJson, String sensitiveNotice) {

@@ -4,8 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.yuforge.runtime.CancellationContext;
+import com.yuforge.runtime.CancellationToken;
 import okhttp3.*;
 import okio.BufferedSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -15,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
 
     protected static final ObjectMapper mapper = new ObjectMapper();
+    private static final Logger log = LoggerFactory.getLogger(AbstractOpenAiCompatibleClient.class);
 
     // SSE 流式接口下，OkHttp 的 readTimeout 是"两次 read 之间的最大间隔"，不是请求总时长。
     // GLM-5.1 在生成大段 reasoning_content 时服务端可能长时间静默，所以默认值放宽到 300s；
@@ -58,6 +63,11 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
     @Override
     public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) throws IOException {
         StreamListener streamListener = listener == null ? StreamListener.NO_OP : listener;
+        String systemPrompt = messages == null ? "" : messages.stream()
+                .filter(message -> "system".equals(message.role()))
+                .map(Message::content)
+                .findFirst()
+                .orElse("");
         RequestBody body = RequestBody.create(
                 buildRequestBody(messages, tools).toString(),
                 MediaType.parse("application/json")
@@ -70,8 +80,13 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
                 .post(body);
         customizeRequest(request);
         Request builtRequest = request.build();
+        Call call = httpClient().newCall(builtRequest);
+        CancellationToken token = CancellationContext.current();
+        CancellationToken.Registration cancellationRegistration = token == null
+                ? CancellationToken.Registration.NO_OP
+                : token.onCancel(call::cancel);
 
-        try (Response response = httpClient().newCall(builtRequest).execute()) {
+        try (cancellationRegistration; Response response = call.execute()) {
             ResponseBody responseBodyObj = response.body();
             if (!response.isSuccessful()) {
                 String errorBody = responseBodyObj != null ? responseBodyObj.string() : "无响应体";
@@ -149,7 +164,6 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
                 String contentDelta = delta.path("content").asText("");
                 if (!contentDelta.isEmpty()) {
                     content.append(contentDelta);
-                    streamListener.onContentDelta(contentDelta);
                 }
 
                 mergeToolCallDeltas(toolAccumulators, delta.path("tool_calls"));
@@ -160,15 +174,29 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
                 throw new IOException("API返回空内容，请检查 provider/model 配置或该模型是否支持当前请求参数");
             }
 
+            SystemPromptLeakGuard.Decision decision = SystemPromptLeakGuard.inspect(systemPrompt, content.toString());
+            if (decision.blocked()) {
+                log.warn("Blocked assistant output containing a continuous system-prompt fragment");
+            }
+            // 正文在完整扫描后才提交到 renderer，防止流式通道先泄露、末端再拦截的竞态。
+            if ((toolCalls == null || toolCalls.isEmpty()) && !decision.safeContent().isEmpty()) {
+                streamListener.onContentDelta(decision.safeContent());
+            }
+
             return new ChatResponse(
                     role,
-                    content.toString(),
+                    decision.safeContent(),
                     reasoning.toString(),
                     toolCalls,
                     inputTokens,
                     outputTokens,
                     cachedInputTokens
             );
+        } catch (IOException e) {
+            if (token != null && token.isCancelled()) {
+                throw new IOException("LLM 调用已取消", e);
+            }
+            throw e;
         }
     }
 

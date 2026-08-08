@@ -126,4 +126,23 @@ class LongTermMemoryTest {
         assertEquals("global", LongTermMemory.scopeOf(legacy));
         assertTrue(LongTermMemory.isVisibleInProject(legacy, "/repo/current"));
     }
+
+    @Test
+    void clearsOnlyRequestedScope() {
+        memory.store(new MemoryEntry("global", "全局偏好", MemoryEntry.MemoryType.FACT,
+                Map.of("scope", "global"), 10));
+        memory.store(new MemoryEntry("project-a", "项目 A", MemoryEntry.MemoryType.FACT,
+                Map.of("scope", "project", "project", "/repo/a"), 10));
+        memory.store(new MemoryEntry("project-b", "项目 B", MemoryEntry.MemoryType.FACT,
+                Map.of("scope", "project", "project", "/repo/b"), 10));
+
+        memory.clearProject("/repo/a");
+
+        assertFalse(memory.retrieve("project-a").isPresent());
+        assertTrue(memory.retrieve("project-b").isPresent());
+        assertTrue(memory.retrieve("global").isPresent());
+        memory.clearGlobal();
+        assertFalse(memory.retrieve("global").isPresent());
+        assertTrue(memory.retrieve("project-b").isPresent());
+    }
 }

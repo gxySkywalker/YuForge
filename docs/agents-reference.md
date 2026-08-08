@@ -88,23 +88,29 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 
 ### Long Context Engineering
 
-- `ContextProfile` 计算 short/balanced/long 模式
+- `ContextProfile` 按模型 window 连续派生预算，不再使用 short/balanced/long 行为分档
 - GLM-5.1: 200k / DeepSeek V4: 1M / Agnes: 1M / StepFun: 256k / Kimi K2.6: 256k / FreeLLMAPI: 128k
-- long 模式(>=100k)：跳过 Memory 自动摘要，search_code 语义辅助 topK=20，MCP resources 自动索引；精确代码定位仍优先实时 glob/grep/read
+- window ≥ 32k 时允许 MCP resources URI/描述索引；精确代码定位仍优先实时 glob/grep/read
 - prompt caching：能力声明 + cached usage 解析
-- 自动压缩阈值按 Claude Code 风格预留空间：`maxContextWindow - min(20k, window/4) - min(13k, window/8)`；200k 窗口约 167k 触发，1M 窗口约 967k 触发，小窗口会按比例缩小预留。
+- 自动压缩高水位：`min(maxContextWindow - min(20k, window/4) - min(13k, window/8), maxContextWindow * 80%)`；200k 约 160k、1M 约 800k 触发。实际 history 阈值还会扣除工具 schema 估算。
 
 ### Memory System
 
 - 两道压缩：
   1. `ContextCompressor` 压缩 shortTermMemory
   2. `ConversationHistoryCompactor` 压缩 conversationHistory（真正发给 LLM 的消息）
-- 第二道压缩切割在 user message 边界，保留最近 3 个 user 起算的尾部
+- 第二道治理先把旧的大型工具结果归档到有界 `ToolResultArtifactStore`，tool message 保留 `artifact_id`、preview 和恢复提示；`read_tool_artifact` 可恢复精确原文
+- 归档仍不足时，切割在 user message 边界，保留最近 3 个 user 起算的完整尾部；摘要区使用全量分块 + Reduce 六段结构化工程检查点，不做固定字符截断
 - 三条路径(ReAct/Plan/SubAgent)都接入第二道压缩
 - `/compact` 可手动压缩当前 ReAct conversationHistory，不等待 token 阈值触发，保留最近 1 个 user 轮次；Plan/SubAgent 仍只走调 LLM 前的自动压缩
+- 查询相关长期记忆追加到当前 user turn 的 `<relevant-memory>` 块，不修改稳定 system 前缀；工具 schema 按名称排序
 - 长期记忆只通过 `/save` 或用户明确要求保存
 - 长期记忆只保存跨会话稳定事实，不保存临时指令；默认项目级作用域，跨项目通用偏好才用 global
+- 长期记忆当前采用关键词检索与元数据轻量加权；同分按 timestamp、id 稳定排序，空查询不返回所有记忆。`MemoryRetrievalGoldenSetTest` 固化相关性、项目隔离、空查询的最小回归集；Embedding hybrid retrieval 是后续可替换增强，接入前必须扩充该评测集并保持当前边界，不影响审计与作用域隔离。
+- 每轮长期记忆注入都会生成仅本地可见的 `MemoryRetrievalTrace`：记录 query token 数、命中数、实际注入的 id/score/token 和因预算跳过的候选。`/memory status`、`/context` 与日志可查看它；trace 不含原始查询或记忆正文，且不会进入模型消息。
+- `MemoryRetrievalStrategy` 是检索策略边界。默认 `KeywordMemoryRetrievalStrategy` 保持零外部依赖与离线回退；未来 Hybrid/Embedding 实现只替换候选排序，必须继续使用当前用户消息注入协议、`MemoryRetrievalTrace` 和 Golden Set。
 - 长期记忆管理命令：`/memory list`、`/memory search <关键词>`、`/memory delete <id>`、`/memory clear`
+- 默认 `/memory list/search/delete/clear` 只操作当前项目可见的 project + global 记忆；`/memory clear --global` 仅清 global，`/memory clear --all` 显式清全部，避免跨项目误删。
 - `YUFORGE.md` 不是 `/save` 长期记忆：它是启动时注入 system prompt 的项目指令文件，适合团队共享、长期稳定、可进 git 的规则
 - 加载顺序：`~/.yuforge/YUFORGE.md` → `YUFORGE.md` → `.yuforge/YUFORGE.md` → `YUFORGE.local.md` → `.yuforge/YUFORGE.local.md`
 - `YUFORGE.md` 中独占一行的 `@relative/path.md` 会被展开；导入路径必须留在用户配置目录或项目根内，总注入内容按预算截断
@@ -137,6 +143,8 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 - `executeTools()` 固定线程池并行，默认最多 4 个并发
 - 返回结果保持原始顺序
 - Agent/PlanExecuteAgent/SubAgent 三条路径都走 executeTools()
+- `execute_command` 按平台选择 shell：Windows 使用 PowerShell，其他平台使用 bash；输出按 UTF-8 读取，实际 shell 进入 `<environment_context>`
+- `glob_files`、Java grep fallback 与 ripgrep 输出均规范化为 `/` 分隔的项目相对路径，保证跨平台后续 `read_file` 参数一致
 
 ### Web Capabilities
 
@@ -183,7 +191,7 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 - 当前开屏 Banner 是无右侧盒线边框的简洁布局，避免 ANSI/CJK 字宽导致竖线错位
 - InlineRenderer 复用 JLine 4 的编辑能力，默认提示符是 `* `，右提示显示 `message / @path / @image`
 - BottomStatusBar 是 JLine `Status` 托管的底部 dock：由 JLine 负责滚动区域和状态行位置，不再手写 `\n`、`moveUp`、`CLEAR_TO_EOS` 或绝对光标行号；dock 上层展示 YOLO/HITL 与 MCP/Skill 摘要，下层展示 model、phase、ctx、token、cost、elapsed 与 cwd。关键字段可用 JLine `AttributedString` 做克制彩色高亮，但纯文本格式和列宽裁剪仍要稳定。`ctx` 只表示当前仍会带入下一轮请求的上下文估算，`in/out/cache` 表示最近任务调用统计。
-- `/clear` 清空当前 ReAct conversationHistory、shortTermMemory 和待注入 SkillContextBuffer，并重建不含上一轮检索记忆的 system prompt；长期记忆条目保留，后续只会按新查询重新检索注入。
+- `/clear` 清空当前 ReAct conversationHistory、shortTermMemory、待注入 SkillContextBuffer、会话 TODO 和 ToolResultArtifactStore，并重建不含上一轮检索记忆的 system prompt；长期记忆条目保留，后续只会按新查询重新检索注入。
 - `/compact` 手动压缩当前 ReAct conversationHistory，压缩期间显示动态 activity 面板，成功后刷新底部 ctx；不会清空 shortTermMemory、长期记忆或待注入 SkillContextBuffer。
 - `/export` 导出当前 ReAct conversationHistory 为 Markdown 到 `~/.yuforge/exports/session-*.md`；包含完整 system prompt，便于检查 LLM 实际接收前的指令，命令不接受路径参数。
 - 普通任务和斜杠命令提交后都会以 `>` 暗色整行块回写原始输入，避免 JLine accept 后清掉编辑行导致结果区看不到刚执行的命令
@@ -205,11 +213,33 @@ scheme 白名单(http/https) / 主机黑名单(localhost/loopback/link-local/sit
 
 ### Prompt Layering (Phase 19)
 
-- 组装顺序：base → personality → mode → approval → runtime_context → project_context → skills → context_mgmt → handoff
-- runtime_context 每轮注入当前日期和系统时区，供相对日期理解使用
-- project_context 顺序：`YUFORGE.md` 项目记忆 → 相关长期记忆 → MCP resources 索引
+- system prompt 组装顺序：base → personality → mode → approval → context_mgmt → handoff → project_context → skills
+- `project_context` 只承载稳定的 `YUFORGE.md` 项目记忆；`RuntimeContextFormatter` 把时间戳、日期/时区、workspace、OS、shell、相关长期记忆与 MCP resource index 放进当前 user turn
+- ReAct、Plan task、SubAgent、Planner 均使用相同的 `<environment_context>`；运行期内容变化不重写 system prompt
 - 覆盖优先级：jar 内置 < 用户级 ~/.yuforge/prompts/ < 项目级 .yuforge/prompts/
 - 必要校验：base.md 和最终 prompt 必须包含 `## Language`
+
+### Tool Failure Recovery
+
+- `ToolResultDiagnostic` 从工具原始文本、timeout 标志和命令退出码生成稳定错误码：`FILE_NOT_FOUND` / `INVALID_ARGUMENT` / `TIMEOUT` / `POLICY_DENIED` / `PERMISSION_DENIED` / `COMMAND_FAILED` / `UNKNOWN_TOOL` / `INTERRUPTED` / `TOOL_ERROR`
+- `ToolAttemptTracker` 生命周期限定在单次 ReAct run、单个 Plan task 或单次 SubAgent execute；调用签名使用“工具名 + 规范化 JSON 参数”，JSON 字段顺序不影响计数
+- 首次失败提供恢复建议；同错误第二次要求改变参数或工具；第三次禁止原样重试并要求报告阻塞
+- 成功的首次工具结果保持原格式，避免无意义 token 膨胀；失败或重复调用才使用结构化 envelope
+- Java stack trace、敏感本地信息留在 debug/audit log，不直接回灌模型
+
+### Session TODO Work Memory
+
+- `rewrite_todo_list` / `update_todo_status` 仅用于复杂、多步骤任务；简单问答或单步修改不应制造 TODO 噪音
+- TODO 由 `TodoTracker` 在进程内保存，不落 SQLite、不进入长期记忆、不替代 Plan DAG 或 DurableTask
+- 清单作为 `<todo_list>` 注入后续 user turn，避免改变稳定 system prompt；底部 dock phase 显示 `TODO completed/total`
+- `/clear` 同时清理对话历史、当前 TODO 清单和会话工具归档
+
+### Session Checkpoint + Resume
+
+- `/checkpoint` 将当前 ReAct 历史与会话 TODO 保存到 `~/.yuforge/sessions/`；可用 `-Dyuforge.session.dir` 或 `YUFORGE_SESSION_DIR` 覆盖目录
+- `/session` 列出最近 10 个 checkpoint；`/resume <session_id>` 只允许恢复当前 project key 相同的会话
+- checkpoint 保存 user/assistant 文本历史和 TODO，但不保存系统提示、图片 payload、任何 tool result 原文或 ToolResultArtifactStore 原文；恢复时重新构建当前 system prompt，工具结果会明确标记为不可恢复
+- 默认最多保留 30 个 checkpoint，写入采用临时文件 + 原子替换；文件系统不支持原子 move 时回退常规替换
 
 ### Async Tasks + Runtime API (Phase 20)
 
@@ -252,7 +282,7 @@ LLM 生成计划 JSON / 简单任务最小计划 / 重编号 task_1..N / 依赖�
 DAG 拓扑排序 / 可执行任务判定 / 进度可视化
 
 ### ToolRegistry.java
-11 个核心内置工具 + MCP 动态工具 / executeTools() 并行入口 / ToolInvocation / ToolExecutionResult。代码理解默认路径是 `glob_files` / `grep_code` / `read_file` 现用现查，`grep_code` 优先走 ripgrep 并按 `max_results` / `head_limit` / `max_chars` 渐进返回，`search_code` 保留为 RAG 语义辅助。确定性搜索链路的回归样例见 `docs/code-search-golden-set.md`。
+核心内置工具 + MCP 动态工具 / executeTools() 并行入口 / ToolInvocation / ToolExecutionResult。`read_tool_artifact` 是会话级只读恢复工具。工具定义按名称排序，避免无意义的 schema 顺序变化破坏 prompt cache。代码理解默认路径是 `glob_files` / `grep_code` / `read_file` 现用现查，`grep_code` 优先走 ripgrep 并按 `max_results` / `head_limit` / `max_chars` 渐进返回，`search_code` 保留为 RAG 语义辅助。确定性搜索链路的回归样例见 `docs/code-search-golden-set.md`。
 
 ### MCP Package
 McpServerManager / McpClient / JsonRpcClient / StdioTransport / StreamableHttpTransport / McpSchemaSanitizer / resources/ / mention/ / notifications/

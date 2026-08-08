@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -101,5 +102,40 @@ class MemoryRetrieverTest {
 
         assertTrue(context.contains("当前项目使用 Java 17"));
         assertFalse(context.contains("其他项目使用 Python"));
+    }
+
+    @Test
+    void shouldExposeRetrievalTraceWithoutQueryOrMemoryContent() {
+        longTerm.store(new MemoryEntry("f1", "项目使用 Maven 执行测试", MemoryEntry.MemoryType.FACT, null, 10));
+        longTerm.store(new MemoryEntry("f2", "项目使用 Maven 构建", MemoryEntry.MemoryType.FACT, null, 10));
+
+        MemoryRetriever.MemoryContextResult result = retriever.buildContextForQueryWithTrace("Maven 测试", 10, null);
+
+        assertTrue(result.context().contains("Maven 执行测试"));
+        assertEquals(2, result.trace().eligibleCount());
+        assertEquals(List.of("f1"), result.trace().injected().stream()
+                .map(MemoryRetrievalTrace.Selection::id).toList());
+        assertEquals(List.of("f2"), result.trace().omittedByBudget().stream()
+                .map(MemoryRetrievalTrace.Selection::id).toList());
+        assertFalse(result.trace().formatForStatus().contains("Maven 测试"));
+        assertFalse(result.trace().formatForStatus().contains("项目使用 Maven"));
+    }
+
+    @Test
+    void shouldAllowReplacingRetrievalStrategyWithoutChangingInjectionProtocol() {
+        MemoryEntry chosen = new MemoryEntry("semantic", "语义召回的稳定事实", MemoryEntry.MemoryType.FACT, null, 10);
+        longTerm.store(chosen);
+        MemoryRetrievalStrategy strategy = (entries, query, limit) -> entries.stream()
+                .filter(entry -> entry.getId().equals("semantic"))
+                .map(entry -> new MemoryRetrievalStrategy.Match(entry, 0.91))
+                .toList();
+        MemoryRetriever customRetriever = new MemoryRetriever(shortTerm, longTerm, strategy);
+
+        MemoryRetriever.MemoryContextResult result = customRetriever
+                .buildContextForQueryWithTrace("不含关键词的自然语言问题", 100, null);
+
+        assertTrue(result.context().contains("语义召回的稳定事实"));
+        assertEquals("semantic", result.trace().injected().get(0).id());
+        assertEquals(1.092, result.trace().injected().get(0).score(), 0.001);
     }
 }

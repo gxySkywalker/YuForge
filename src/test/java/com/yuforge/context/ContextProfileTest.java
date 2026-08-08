@@ -19,8 +19,8 @@ class ContextProfileTest {
 
         assertEquals(200_000, profile.maxContextWindow());
         assertEquals(160_000, profile.agentTokenBudget());                  // 200k × 0.8
-        assertEquals(0.835, profile.compressionTriggerRatio(), 0.001);
-        assertEquals(167_000, profile.compressionTriggerTokens());          // 200k - 20k - 13k
+        assertEquals(0.80, profile.compressionTriggerRatio(), 0.001);
+        assertEquals(160_000, profile.compressionTriggerTokens());          // 80% high watermark
         assertEquals(90_000, profile.shortTermMemoryBudget());              // 200k × 0.45
         assertTrue(profile.mcpResourceIndexEnabled());                      // window ≥ 32k
         assertTrue(profile.promptCachingSupported());
@@ -32,7 +32,7 @@ class ContextProfileTest {
 
         assertEquals(1_000_000, profile.maxContextWindow());
         assertEquals(800_000, profile.agentTokenBudget());                  // 1M × 0.8
-        assertEquals(967_000, profile.compressionTriggerTokens());          // 1M - 20k - 13k
+        assertEquals(800_000, profile.compressionTriggerTokens());          // capped at 80% high watermark
         assertEquals(450_000, profile.shortTermMemoryBudget());             // 1M × 0.45
         assertEquals("automatic-prefix-cache", profile.promptCacheMode());
         assertTrue(profile.mcpResourceIndexEnabled());

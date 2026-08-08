@@ -137,6 +137,7 @@ public class AgentOrchestrator {
      */
     public String run(String userInput) {
         log.info("Multi-Agent run started: inputLength={}", userInput == null ? 0 : userInput.length());
+        toolRegistry.setMemoryWriteAuthorization(userInput);
         memoryManager.addUserMessage(userInput);
         if (CancellationContext.isCancelled()) {
             return "⏹️ 已取消当前多 Agent 任务。";

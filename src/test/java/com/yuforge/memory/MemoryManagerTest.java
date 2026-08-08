@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryManagerTest {
@@ -66,8 +67,46 @@ class MemoryManagerTest {
 
         MemoryEntry projectEntry = longTermMemory.search("Java", 5, memoryManager.getCurrentProject()).get(0);
         assertEquals("project", projectEntry.getMetadata().get("scope"));
-        assertTrue(projectEntry.getMetadata().get("project").endsWith("/repo/current"));
+        assertEquals(memoryManager.getCurrentProject(), projectEntry.getMetadata().get("project"));
         assertEquals("global", longTermMemory.search("中文", 5).get(0).getMetadata().get("scope"));
+    }
+
+    @Test
+    void shouldKeepProjectMemoryOperationsWithinVisibleScope() {
+        LongTermMemory longTermMemory = new LongTermMemory(tempDir.toFile());
+        MemoryManager memoryManager = new MemoryManager(new StubGLMClient(List.of()), 32768, 128000, longTermMemory);
+        memoryManager.setProjectPath("/repo/current");
+        longTermMemory.store(new MemoryEntry("current", "当前项目", MemoryEntry.MemoryType.FACT,
+                java.util.Map.of("scope", "project", "project", memoryManager.getCurrentProject()), 10));
+        longTermMemory.store(new MemoryEntry("other", "其他项目", MemoryEntry.MemoryType.FACT,
+                java.util.Map.of("scope", "project", "project", "/repo/other"), 10));
+        longTermMemory.store(new MemoryEntry("global", "全局偏好", MemoryEntry.MemoryType.FACT,
+                java.util.Map.of("scope", "global"), 10));
+
+        assertEquals(2, memoryManager.listLongTerm().size());
+        assertFalse(memoryManager.deleteLongTerm("other"));
+        memoryManager.clearLongTerm();
+
+        assertFalse(longTermMemory.retrieve("current").isPresent());
+        assertTrue(longTermMemory.retrieve("other").isPresent());
+        assertTrue(longTermMemory.retrieve("global").isPresent());
+    }
+
+    @Test
+    void shouldRetrieveLongTermMemoryInDeterministicOrder() {
+        LongTermMemory longTermMemory = new LongTermMemory(tempDir.toFile());
+        MemoryManager memoryManager = new MemoryManager(new StubGLMClient(List.of()), 32768, 128000, longTermMemory);
+        memoryManager.setProjectPath("/repo/current");
+        longTermMemory.store(new MemoryEntry("b", "Java 构建命令", MemoryEntry.MemoryType.FACT,
+                java.time.Instant.parse("2026-01-01T00:00:00Z"),
+                java.util.Map.of("scope", "project", "project", memoryManager.getCurrentProject()), 10));
+        longTermMemory.store(new MemoryEntry("a", "Java 测试命令", MemoryEntry.MemoryType.FACT,
+                java.time.Instant.parse("2026-02-01T00:00:00Z"),
+                java.util.Map.of("scope", "project", "project", memoryManager.getCurrentProject()), 10));
+
+        List<MemoryEntry> results = memoryManager.searchLongTerm("Java", 10);
+
+        assertEquals(List.of("a", "b"), results.stream().map(MemoryEntry::getId).toList());
     }
 
     @Test
@@ -91,9 +130,9 @@ class MemoryManagerTest {
         // 验证：长 window 模型也使用自动压缩阈值，没有"长模式不压缩"的二元开关
         MemoryManager memoryManager = new MemoryManager(new GLMClient("test-key"));
 
-        assertEquals(0.835, memoryManager.getContextProfile().compressionTriggerRatio(), 0.001);
+        assertEquals(0.80, memoryManager.getContextProfile().compressionTriggerRatio(), 0.001);
         assertEquals(200000, memoryManager.getTokenBudget().getContextWindow());
-        assertEquals(167000, memoryManager.getContextProfile().compressionTriggerTokens());
+        assertEquals(160000, memoryManager.getContextProfile().compressionTriggerTokens());
     }
 
     private static final class StubGLMClient extends GLMClient {

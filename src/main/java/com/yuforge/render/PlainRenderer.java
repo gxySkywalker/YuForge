@@ -55,6 +55,11 @@ public final class PlainRenderer implements Renderer {
     }
 
     @Override
+    public boolean rendersReasoning() {
+        return ReasoningDisplayPolicy.showRawReasoning();
+    }
+
+    @Override
     public void appendToolCalls(List<LlmClient.ToolCall> toolCalls) {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return;

@@ -174,6 +174,54 @@ class ConversationHistoryCompactorTest {
         assertEquals(before, history.size());
     }
 
+    @Test
+    void archivesOldLargeToolResultWithoutBreakingProtocol() {
+        ToolResultArtifactStore store = new ToolResultArtifactStore();
+        ConversationHistoryCompactor compactor = new ConversationHistoryCompactor(null, 3, store);
+        List<LlmClient.Message> history = new ArrayList<>();
+        history.add(LlmClient.Message.system("S"));
+        history.add(LlmClient.Message.user("inspect"));
+        for (int i = 0; i < 4; i++) {
+            String callId = "call-" + i;
+            history.add(LlmClient.Message.assistant(null, null, List.of(new LlmClient.ToolCall(
+                    callId, new LlmClient.ToolCall.Function("read_file", "{\"path\":\"f" + i + "\"}")))));
+            history.add(LlmClient.Message.tool(callId, i == 0 ? "IMPORTANT=" + longText(8_000) : "short-" + i));
+        }
+
+        ConversationHistoryCompactor.ContextManagementResult result = compactor.manageIfNeeded(history, 1_000);
+
+        assertFalse(result.compacted());
+        assertEquals(1, result.archivedToolResults());
+        LlmClient.Message archived = history.stream()
+                .filter(message -> "tool".equals(message.role()) && "call-0".equals(message.toolCallId()))
+                .findFirst().orElseThrow();
+        assertTrue(archived.content().contains("[旧工具结果已归档]"));
+        String artifactId = archived.content().lines()
+                .filter(line -> line.startsWith("artifact_id:"))
+                .map(line -> line.substring("artifact_id:".length()).trim())
+                .findFirst().orElseThrow();
+        assertTrue(store.get(artifactId).orElseThrow().content().startsWith("IMPORTANT="));
+    }
+
+    @Test
+    void productionSummarizerCoversMiddleOfVeryLargeHistory() {
+        RecordingSummaryClient client = new RecordingSummaryClient();
+        ConversationHistoryCompactor compactor = new ConversationHistoryCompactor(client, 1);
+        List<LlmClient.Message> history = new ArrayList<>();
+        history.add(LlmClient.Message.system("S"));
+        history.add(LlmClient.Message.user("BEGIN_MARKER\n" + longText(50_000)
+                + "\nMIDDLE_MARKER\n" + longText(50_000) + "\nEND_MARKER"));
+        history.add(LlmClient.Message.assistant("done"));
+        history.add(LlmClient.Message.user("recent"));
+
+        assertTrue(compactor.compactNow(history));
+        String allPrompts = String.join("\n", client.prompts);
+        assertTrue(allPrompts.contains("BEGIN_MARKER"));
+        assertTrue(allPrompts.contains("MIDDLE_MARKER"));
+        assertTrue(allPrompts.contains("END_MARKER"));
+        assertTrue(client.prompts.size() >= 3, "large history should require map chunks plus reduce");
+    }
+
     private static String longText(int chars) {
         StringBuilder sb = new StringBuilder(chars);
         for (int i = 0; i < chars; i++) sb.append('x');
@@ -195,5 +243,24 @@ class ConversationHistoryCompactorTest {
             summarizeCalls.incrementAndGet();
             return mockSummary;
         }
+    }
+
+    private static final class RecordingSummaryClient implements LlmClient {
+        final List<String> prompts = new ArrayList<>();
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools) {
+            return chat(messages, tools, StreamListener.NO_OP);
+        }
+
+        @Override
+        public ChatResponse chat(List<Message> messages, List<Tool> tools, StreamListener listener) {
+            prompts.add(messages.get(1).content());
+            return new ChatResponse("assistant",
+                    "## 目标与用户约束\ncheckpoint-" + prompts.size(), null, 100, 20);
+        }
+
+        @Override public String getModelName() { return "test"; }
+        @Override public String getProviderName() { return "test"; }
     }
 }

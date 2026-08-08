@@ -14,10 +14,17 @@ import java.util.stream.Collectors;
 public class MemoryRetriever {
     private final ConversationMemory shortTermMemory;
     private final LongTermMemory longTermMemory;
+    private final MemoryRetrievalStrategy retrievalStrategy;
 
     public MemoryRetriever(ConversationMemory shortTermMemory, LongTermMemory longTermMemory) {
+        this(shortTermMemory, longTermMemory, new KeywordMemoryRetrievalStrategy());
+    }
+
+    public MemoryRetriever(ConversationMemory shortTermMemory, LongTermMemory longTermMemory,
+                           MemoryRetrievalStrategy retrievalStrategy) {
         this.shortTermMemory = shortTermMemory;
         this.longTermMemory = longTermMemory;
+        this.retrievalStrategy = retrievalStrategy == null ? new KeywordMemoryRetrievalStrategy() : retrievalStrategy;
     }
 
     /**
@@ -30,26 +37,15 @@ public class MemoryRetriever {
     public List<MemoryEntry> retrieve(String query, int limit) {
         List<ScoredEntry> scored = new ArrayList<>();
 
-        // 从短期记忆中检索
-        for (MemoryEntry entry : shortTermMemory.getAll()) {
-            double score = computeRelevanceScore(entry, query);
-            if (score > 0) {
-                scored.add(new ScoredEntry(entry, score, true));
-            }
-        }
-
-        // 从长期记忆中检索
-        for (MemoryEntry entry : longTermMemory.getAll()) {
-            double score = computeRelevanceScore(entry, query);
-            // 长期记忆加一个小权重，因为它更精炼
-            if (score > 0) {
-                scored.add(new ScoredEntry(entry, score * 1.2, false));
-            }
-        }
+        retrievalStrategy.rank(shortTermMemory.getAll(), query, limit)
+                .forEach(match -> scored.add(new ScoredEntry(match.entry(), match.score(), true)));
+        // 长期记忆是人工确认的稳定事实，在同等相关度下优先于短期对话。
+        retrievalStrategy.rank(longTermMemory.getAll(), query, limit)
+                .forEach(match -> scored.add(new ScoredEntry(match.entry(), match.score() * 1.2, false)));
 
         // 按分数降序排序
         return scored.stream()
-                .sorted(Comparator.comparingDouble(ScoredEntry::score).reversed())
+                .sorted(scoredEntryComparator())
                 .limit(limit)
                 .map(ScoredEntry::entry)
                 .collect(Collectors.toList());
@@ -66,14 +62,15 @@ public class MemoryRetriever {
     }
 
     public List<MemoryEntry> retrieveLongTerm(String query, int limit, String projectKey) {
-        return longTermMemory.getAll().stream()
-                .filter(entry -> LongTermMemory.isVisibleInProject(entry, projectKey))
-                .map(entry -> new ScoredEntry(entry, computeRelevanceScore(entry, query) * 1.2, false))
-                .filter(scoredEntry -> scoredEntry.score() > 0)
-                .sorted(Comparator.comparingDouble(ScoredEntry::score).reversed())
-                .limit(limit)
-                .map(ScoredEntry::entry)
-                .collect(Collectors.toList());
+        return retrieveLongTermMatches(query, limit, projectKey).stream().map(ScoredEntry::entry).toList();
+    }
+
+    private List<ScoredEntry> retrieveLongTermMatches(String query, int limit, String projectKey) {
+        return retrievalStrategy.rank(longTermMemory.getAll().stream()
+                        .filter(entry -> LongTermMemory.isVisibleInProject(entry, projectKey)).toList(), query, limit)
+                .stream()
+                .map(match -> new ScoredEntry(match.entry(), match.score() * 1.2, false))
+                .toList();
     }
 
     /**
@@ -84,57 +81,55 @@ public class MemoryRetriever {
     }
 
     public String buildContextForQuery(String query, int maxTokens, String projectKey) {
-        List<MemoryEntry> relevant = retrieveLongTerm(query, 10, projectKey);
-        if (relevant.isEmpty()) return "";
+        return buildContextForQueryWithTrace(query, maxTokens, projectKey).context();
+    }
+
+    public MemoryContextResult buildContextForQueryWithTrace(String query, int maxTokens, String projectKey) {
+        List<ScoredEntry> relevant = retrieveLongTermMatches(query, 10, projectKey);
+        int queryTokenCount = MemoryQueryTokenizer.tokenize(query).size();
+        if (relevant.isEmpty()) {
+            return new MemoryContextResult("", new MemoryRetrievalTrace(
+                    query == null ? 0 : query.length(), queryTokenCount, 0, maxTokens, 0, List.of(), List.of()));
+        }
 
         StringBuilder context = new StringBuilder();
         context.append("## 相关长期记忆\n\n");
 
         int usedTokens = 0;
-        for (MemoryEntry entry : relevant) {
-            if (usedTokens + entry.getTokenCount() > maxTokens) break;
+        List<MemoryRetrievalTrace.Selection> injected = new ArrayList<>();
+        List<MemoryRetrievalTrace.Selection> omittedByBudget = new ArrayList<>();
+        for (int index = 0; index < relevant.size(); index++) {
+            ScoredEntry scoredEntry = relevant.get(index);
+            MemoryEntry entry = scoredEntry.entry();
+            double score = scoredEntry.score();
+            if (usedTokens + entry.getTokenCount() > maxTokens) {
+                for (int remaining = index; remaining < relevant.size(); remaining++) {
+                    ScoredEntry omitted = relevant.get(remaining);
+                    omittedByBudget.add(new MemoryRetrievalTrace.Selection(omitted.entry().getId(),
+                            omitted.score(), omitted.entry().getTokenCount()));
+                }
+                break;
+            }
 
             context.append("- [").append(entry.getType()).append("] ")
                     .append(entry.getContent()).append("\n");
             usedTokens += entry.getTokenCount();
+            injected.add(new MemoryRetrievalTrace.Selection(entry.getId(), score, entry.getTokenCount()));
         }
 
-        context.append("\n");
-        return context.toString();
+        String renderedContext = injected.isEmpty() ? "" : context.append("\n").toString();
+        return new MemoryContextResult(renderedContext, new MemoryRetrievalTrace(
+                query == null ? 0 : query.length(), queryTokenCount, relevant.size(), maxTokens, usedTokens,
+                injected, omittedByBudget));
     }
 
-    /**
-     * 计算记忆条目与查询的相关度分数
-     */
-    private double computeRelevanceScore(MemoryEntry entry, String query) {
-        String contentLower = entry.getContent().toLowerCase();
-        String queryLower = query.toLowerCase();
-
-        // 1. 精确匹配加分
-        if (contentLower.contains(queryLower)) {
-            return 1.0;
-        }
-
-        // 2. 关键词匹配
-        Set<String> queryWords = MemoryQueryTokenizer.tokenize(queryLower);
-        int matchedWords = 0;
-        for (String word : queryWords) {
-            if (!word.isEmpty() && contentLower.contains(word)) {
-                matchedWords++;
-            }
-        }
-
-        if (matchedWords == 0) return 0;
-
-        double keywordScore = (double) matchedWords / queryWords.size();
-
-        // 3. 时间衰减（越近分数越高，简单实现）
-        long ageMs = System.currentTimeMillis() - entry.getTimestamp().toEpochMilli();
-        double ageHours = ageMs / (1000.0 * 60 * 60);
-        double timeDecay = Math.max(0.5, 1.0 - ageHours / 24.0); // 24小时内从1.0衰减到0.5
-
-        return keywordScore * timeDecay;
+    private static Comparator<ScoredEntry> scoredEntryComparator() {
+        return Comparator.comparingDouble(ScoredEntry::score).reversed()
+                .thenComparing(entry -> entry.entry().getTimestamp(), Comparator.reverseOrder())
+                .thenComparing(entry -> entry.entry().getId());
     }
 
     private record ScoredEntry(MemoryEntry entry, double score, boolean fromShortTerm) {}
+
+    public record MemoryContextResult(String context, MemoryRetrievalTrace trace) {}
 }
