@@ -144,18 +144,36 @@ Windows 上 YuForge 会解析 `npx` 到 `npx.cmd`，避免 PowerShell 可以调�
 ## 架构概览
 
 ```text
-用户输入
-  ├─ CLI：工作区信任、命令补全、@path / MCP resource 展开
-  ├─ Runtime Context：时间、工作目录、Shell、相关记忆（当前 user turn）
-  └─ Agent
-       ├─ ReAct（默认）
-       ├─ Plan-and-Execute（/plan）
-       └─ Multi-Agent（/team）
-            └─ ToolRegistry → HITL → PathGuard / CommandGuard → 本地或 MCP 工具
-                 ├─ Memory / Context Compaction / Artifact Store
-                 ├─ Side-Git Snapshot / revert
-                 └─ Renderer：追加式、可审计 transcript
+┌────────────────────── 交互与入口层 ──────────────────────┐
+│ CLI：工作区信任、命令补全、@path / MCP resource、/ 命令     │
+│ Runtime Context：时间、工作目录、Shell、相关记忆            │
+└──────────────────────────────┬──────────────────────────┘
+                               ▼
+┌────────────────────── Agent 执行层 ──────────────────────┐
+│ ReAct（默认）  │  Plan-and-Execute（/plan）  │  Team（/team）│
+└──────────────────────────────┬──────────────────────────┘
+                               ▼
+┌────────────────────── 共享运行时层 ──────────────────────┐
+│ PromptAssembler / LlmClient / CancellationToken           │
+│ ToolRegistry → HITL → PathGuard / CommandGuard → 工具执行 │
+│ 并行调度、工具重试约束、变更验证证据                       │
+└───────────────┬───────────────────────┬─────────────────┘
+                ▼                       ▼
+┌────────────────────────┐  ┌────────────────────────────┐
+│ 状态与可恢复性          │  │ 工具与外部能力              │
+│ Memory / Context        │  │ 本地文件、代码搜索、命令、  │
+│ Compaction / Artifact   │  │ 后台进程、Web、MCP、Browser │
+│ Store / Checkpoint      │  └────────────────────────────┘
+│ Side-Git Snapshot       │
+└──────────────┬─────────┘
+               ▼
+┌────────────────────── 呈现与审计层 ──────────────────────┐
+│ Inline / Plain Renderer：append-only transcript、工具摘要 │
+│ Audit Log / Debug Log / Session Export                    │
+└─────────────────────────────────────────────────────────┘
 ```
+
+`ReAct`、`/plan` 和 `/team` 只是不同的任务编排策略；它们都经过同一套 Prompt、工具执行、安全、记忆、快照、渲染和审计基础设施。`/team` 额外拥有的是 Planner / Worker / Reviewer 的协作编排，不拥有或绕过这些共享能力。
 
 代码理解优先走可解释的实时探索：`glob_files` 找候选文件、`grep_code` 定位符号或字符串、`read_file` 按需读取行段。`search_code` 是语义辅助工具，不替代精确搜索。
 
@@ -206,4 +224,4 @@ git push origin v1.0.2
 
 ## License
 
-尚未选择开源许可证。公开发布前建议根据你的开源意图添加 `LICENSE`；常见选择为 MIT 或 Apache-2.0。
+本项目采用 [MIT License](LICENSE)。第三方依赖按各自许可证使用。

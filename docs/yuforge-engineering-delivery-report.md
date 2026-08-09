@@ -20,17 +20,16 @@ YuForge 已从“调用大模型的命令行 Demo”收敛为可在真实项目�
 用户输入
   ├─ CLI：命令补全 / 工作区信任 / 本地 @path 与 MCP resource 展开
   ├─ Runtime Context：时间、工作目录、Shell、相关记忆（当前 user turn）
-  └─ Agent
-       ├─ ReAct（默认）
-       ├─ Plan-and-Execute（/plan）
-       └─ Multi-Agent（/team）
-            └─ ToolRegistry → HITL → PathGuard / CommandGuard → 本地或 MCP 工具
-                 ├─ Side-Git Snapshot / revert
-                 ├─ Memory / Context Compaction / Artifact Store
-                 └─ Renderer：追加式、可审计 transcript
+  └─ Agent execution：ReAct（默认）/ Plan-and-Execute（/plan）/ Multi-Agent（/team）
+       └─ shared runtime
+            ├─ PromptAssembler / LlmClient / CancellationToken
+            ├─ ToolRegistry → HITL → PathGuard / CommandGuard → 本地或 MCP 工具
+            ├─ Memory / Context Compaction / Artifact Store / Checkpoint
+            ├─ Side-Git Snapshot / revert
+            └─ Renderer、Audit Log 与 Session Export
 ```
 
-三条 Agent 路径共享 ToolRegistry、记忆、上下文治理和安全策略。这样能避免“默认模式安全、Plan 或子 Agent 绕过安全”的架构分叉。
+三条 Agent 路径共享 ToolRegistry、记忆、上下文治理、安全策略、快照和渲染；`/team` 只增加 Planner / Worker / Reviewer 的任务编排，不拥有或绕过共享运行时。这样能避免“默认模式安全、Plan 或子 Agent 绕过安全”的架构分叉。
 
 ## 3. 上下文、Prompt Cache 与记忆
 
