@@ -143,34 +143,61 @@ Windows 上 YuForge 会解析 `npx` 到 `npx.cmd`，避免 PowerShell 可以调�
 
 ## 架构概览
 
-```text
-┌────────────────────── 交互与入口层 ──────────────────────┐
-│ CLI：工作区信任、命令补全、@path / MCP resource、/ 命令     │
-│ Runtime Context：时间、工作目录、Shell、相关记忆            │
-└──────────────────────────────┬──────────────────────────┘
-                               ▼
-┌────────────────────── Agent 执行层 ──────────────────────┐
-│ ReAct（默认）  │  Plan-and-Execute（/plan）  │  Team（/team）│
-└──────────────────────────────┬──────────────────────────┘
-                               ▼
-┌────────────────────── 共享运行时层 ──────────────────────┐
-│ PromptAssembler / LlmClient / CancellationToken           │
-│ ToolRegistry → HITL → PathGuard / CommandGuard → 工具执行 │
-│ 并行调度、工具重试约束、变更验证证据                       │
-└───────────────┬───────────────────────┬─────────────────┘
-                ▼                       ▼
-┌────────────────────────┐  ┌────────────────────────────┐
-│ 状态与可恢复性          │  │ 工具与外部能力              │
-│ Memory / Context        │  │ 本地文件、代码搜索、命令、  │
-│ Compaction / Artifact   │  │ 后台进程、Web、MCP、Browser │
-│ Store / Checkpoint      │  └────────────────────────────┘
-│ Side-Git Snapshot       │
-└──────────────┬─────────┘
-               ▼
-┌────────────────────── 呈现与审计层 ──────────────────────┐
-│ Inline / Plain Renderer：append-only transcript、工具摘要 │
-│ Audit Log / Debug Log / Session Export                    │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Ingress[交互与入口层]
+        CLI[CLI：工作区信任、命令补全、@path / MCP resource、斜杠命令]
+        RuntimeContext[Runtime Context：时间、工作目录、Shell、相关记忆]
+    end
+
+    subgraph Execution[Agent 执行层]
+        React[ReAct：默认]
+        Plan[Plan-and-Execute：/plan]
+        Team[Multi-Agent：/team]
+    end
+
+    subgraph Runtime[共享运行时层]
+        Prompt[PromptAssembler / LlmClient / CancellationToken]
+        Gateway[ToolRegistry]
+        Policy[HITL / PathGuard / CommandGuard]
+        Scheduler[并行调度、重试约束、变更验证证据]
+    end
+
+    subgraph State[状态与可恢复性]
+        Memory[Memory / Context Compaction / Artifact Store / Checkpoint]
+        Snapshot[Side-Git Snapshot / revert]
+    end
+
+    subgraph Tools[工具与外部能力]
+        Local[本地文件、代码搜索、命令、后台进程]
+        External[Web / MCP / Browser]
+    end
+
+    subgraph Output[呈现与审计层]
+        Renderer[Inline / Plain Renderer：append-only transcript]
+        Audit[Audit Log / Debug Log / Session Export]
+    end
+
+    CLI --> React
+    CLI --> Plan
+    CLI --> Team
+    RuntimeContext --> React
+    RuntimeContext --> Plan
+    RuntimeContext --> Team
+    React --> Prompt
+    Plan --> Prompt
+    Team --> Prompt
+    Prompt --> Gateway --> Policy --> Scheduler
+    Scheduler --> Memory
+    Scheduler --> Snapshot
+    Scheduler --> Local
+    Scheduler --> External
+    Scheduler --> Renderer
+    Memory --> Audit
+    Snapshot --> Audit
+    Local --> Audit
+    External --> Audit
+    Renderer --> Audit
 ```
 
 `ReAct`、`/plan` 和 `/team` 只是不同的任务编排策略；它们都经过同一套 Prompt、工具执行、安全、记忆、快照、渲染和审计基础设施。`/team` 额外拥有的是 Planner / Worker / Reviewer 的协作编排，不拥有或绕过这些共享能力。

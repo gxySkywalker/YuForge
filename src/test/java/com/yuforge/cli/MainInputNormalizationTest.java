@@ -60,7 +60,7 @@ class MainInputNormalizationTest {
 
         assertTrue(lines.stream().anyMatch(line -> line.contains("YuForge")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("YU")));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("v16.1.0")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("v1.0.2")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("██    ██  ██    ██")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("   ██      ██████")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("Tips for getting started")));

@@ -99,7 +99,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
- * YuForge v16.1.0 - Terminal-First Agent IDE
+ * YuForge v1.0.2 - Terminal-First Agent IDE
  * 支持 ReAct、Plan-and-Execute、Memory、RAG、Multi-Agent、HITL、并行工具调用、多模型切换、MCP、CDP 会话复用
  * 第 15 期新增：Skill 系统（三层加载 + load_skill 工具 + SkillContextBuffer 注入）、内置 web-access skill
  * 第 16 期新增：TUI 界面（Lanterna 3）、文件树浏览、代码高亮、对话历史可视化、配置管理面板
@@ -110,7 +110,7 @@ import java.util.regex.Pattern;
  * HITL 增强：路径围栏（PathGuard）、命令快速拒绝（CommandGuard）、操作审计链（AuditLog）—— 见 com.yuforge.policy
  */
 public class Main {
-    private static final String VERSION = "16.1.0";
+    private static final String VERSION = "1.0.2";
     private static final String ENV_FILE = ".env";
     private static final String LOG_DIR_PROPERTY = "yuforge.log.dir";
     private static final String LOG_LEVEL_PROPERTY = "yuforge.log.level";
