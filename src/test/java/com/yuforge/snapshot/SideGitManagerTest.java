@@ -48,6 +48,7 @@ class SideGitManagerTest {
         SnapshotService service = new SnapshotService(new SideGitManager(project, config));
 
         String output = service.runTurn("react", "write file", () -> {
+            service.ensurePreTurnSnapshot();
             Files.writeString(project.resolve("a.txt"), "created");
             return "ok";
         });
@@ -58,5 +59,19 @@ class SideGitManagerTest {
         assertEquals(2, all.size());
         assertEquals(SnapshotPhase.POST_TURN, all.get(0).phase());
         assertEquals(SnapshotPhase.PRE_TURN, all.get(1).phase());
+    }
+
+    @Test
+    void serviceSkipsSnapshotsForReadOnlyTurns() throws Exception {
+        Path project = tempDir.resolve("project");
+        Path snapshots = tempDir.resolve("snapshots");
+        Files.createDirectories(project);
+        SnapshotConfig config = new SnapshotConfig(true, snapshots, 50, List.of(".git", "target"));
+        SnapshotService service = new SnapshotService(new SideGitManager(project, config));
+
+        assertEquals("hello", service.runTurn("react", "hello", () -> "hello"));
+        service.awaitIdle();
+
+        assertTrue(service.listSnapshots(10).isEmpty());
     }
 }

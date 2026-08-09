@@ -14,6 +14,7 @@ import com.yuforge.prompt.PromptMode;
 import com.yuforge.prompt.ProjectMemoryLoader;
 import com.yuforge.prompt.RuntimeContextFormatter;
 import com.yuforge.render.ReasoningDisplayPolicy;
+import com.yuforge.render.Renderer;
 import com.yuforge.skill.SkillContextBuffer;
 import com.yuforge.skill.SkillIndexFormatter;
 import com.yuforge.skill.SkillRegistry;
@@ -56,6 +57,7 @@ public class SubAgent {
     private final ConversationHistoryCompactor historyCompactor;
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
     private final RuntimeContextFormatter runtimeContextFormatter = RuntimeContextFormatter.systemDefault();
+    private Renderer renderer;
 
     public SubAgent(String name, AgentRole role, LlmClient llmClient, ToolRegistry toolRegistry) {
         this.name = name;
@@ -81,6 +83,11 @@ public class SubAgent {
 
     public void setSkillContextBuffer(SkillContextBuffer skillContextBuffer) {
         this.skillContextBuffer = skillContextBuffer;
+    }
+
+    /** 注入直连终端渲染器；并行批次使用独立缓冲流时会自动回退为纯文本输出。 */
+    public void setRenderer(Renderer renderer) {
+        this.renderer = renderer;
     }
 
     /**
@@ -197,7 +204,8 @@ public class SubAgent {
                 taskContent,
                 Path.of(toolRegistry.getProjectPath())));
 
-        SubAgentStreamRenderer streamRenderer = new SubAgentStreamRenderer(name, role, out);
+        Renderer activeRenderer = renderer != null && out == renderer.stream() ? renderer : null;
+        SubAgentStreamRenderer streamRenderer = new SubAgentStreamRenderer(name, role, out, activeRenderer);
 
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
         ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
@@ -221,6 +229,7 @@ public class SubAgent {
             maybeCompactHistory(out);
 
             try {
+                streamRenderer.beginThinking();
                 LlmClient.ChatResponse response = llmClient.chat(
                         conversationHistory,
                         shouldUseTools() && llmClient.supportsTools() ? toolRegistry.getToolDefinitions() : null,
@@ -383,7 +392,11 @@ public class SubAgent {
         }
     }
 
-    private static void printToolCalls(PrintStream out, List<LlmClient.ToolCall> toolCalls) {
+    private void printToolCalls(PrintStream out, List<LlmClient.ToolCall> toolCalls) {
+        if (renderer != null && out == renderer.stream()) {
+            renderer.appendToolCalls(toolCalls);
+            return;
+        }
         Map<String, List<LlmClient.ToolCall>> grouped = new LinkedHashMap<>();
         for (LlmClient.ToolCall tc : toolCalls) {
             grouped.computeIfAbsent(tc.function().name(), k -> new ArrayList<>()).add(tc);
@@ -405,8 +418,15 @@ public class SubAgent {
         return switch (toolName) {
             case "read_file" -> "📖 读取 " + count + " 个文件";
             case "write_file" -> "✏️ 写入 " + count + " 个文件";
+            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
             case "list_dir" -> "📂 列出 " + count + " 个目录";
             case "execute_command" -> "⚡ 执行 " + count + " 条命令";
+            case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
+            case "list_background_processes" -> "🧭 查看后台服务";
+            case "read_background_process_log" -> "📜 查看服务日志";
+            case "inspect_background_process" -> "🩺 诊断后台服务";
+            case "wait_background_process_ready" -> "⏳ 等待服务就绪";
+            case "stop_background_process" -> "⏹️ 停止后台服务";
             case "create_project" -> "🏗️ 创建 " + count + " 个项目";
             case "search_code" -> "🔍 搜索代码 " + count + " 次";
             case "web_search" -> "🌐 联网搜索 " + count + " 次";
@@ -430,8 +450,10 @@ public class SubAgent {
         try {
             JsonNode node = JSON_MAPPER.readTree(argsJson);
             String key = switch (toolName) {
-                case "read_file", "write_file", "list_dir" -> "path";
+                case "read_file", "write_file", "apply_patch", "list_dir" -> "path";
                 case "execute_command" -> "command";
+                case "start_background_process" -> "command";
+                case "read_background_process_log", "stop_background_process" -> "process_id";
                 case "create_project" -> "name";
                 case "search_code", "web_search" -> "query";
                 case "web_fetch" -> "url";
@@ -470,6 +492,7 @@ public class SubAgent {
         private final String agentName;
         private final AgentRole role;
         private final PrintStream out;
+        private final Renderer renderer;
         private final StringBuilder pendingReasoning = new StringBuilder();
         private final StringBuilder lateReasoning = new StringBuilder();
         private TerminalMarkdownRenderer reasoningRenderer;
@@ -478,10 +501,19 @@ public class SubAgent {
         private boolean contentStarted;
         private boolean streamedOutput;
 
-        private SubAgentStreamRenderer(String agentName, AgentRole role, PrintStream out) {
+        private SubAgentStreamRenderer(String agentName, AgentRole role, PrintStream out, Renderer renderer) {
             this.agentName = agentName;
             this.role = role;
             this.out = out;
+            this.renderer = renderer;
+        }
+
+        private void beginThinking() {
+            if (renderer != null && renderer.supportsThinkingPanel()) renderer.beginThinking("Thinking");
+        }
+
+        private void endThinking() {
+            if (renderer != null && renderer.supportsThinkingPanel()) renderer.endThinking();
         }
 
         @Override
@@ -518,6 +550,7 @@ public class SubAgent {
             if (delta == null || delta.isEmpty()) {
                 return;
             }
+            endThinking();
             if (!contentStarted) {
                 if (reasoningStarted && reasoningRenderer != null) {
                     reasoningRenderer.finish();
@@ -564,6 +597,7 @@ public class SubAgent {
          * 让下一轮迭代的 reasoning/content 能重新打印各自的标题。
          */
         private void resetBetweenIterations() {
+            endThinking();
             if (reasoningRenderer != null) {
                 reasoningRenderer.finish();
                 reasoningRenderer = null;
@@ -591,6 +625,7 @@ public class SubAgent {
         }
 
         private void finish() {
+            endThinking();
             if (reasoningRenderer != null) {
                 reasoningRenderer.finish();
             }

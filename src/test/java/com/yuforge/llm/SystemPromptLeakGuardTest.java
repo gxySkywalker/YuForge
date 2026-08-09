@@ -29,4 +29,33 @@ class SystemPromptLeakGuardTest {
 
         assertFalse(decision.blocked());
     }
+
+    @Test
+    void streamsSafePrefixBeforeResponseFinishes() {
+        StringBuilder streamed = new StringBuilder();
+        SystemPromptLeakGuard.StreamingSession session = SystemPromptLeakGuard.streaming(SYSTEM_PROMPT, streamed::append);
+        String answer = "这是正常的开发建议。" + "a".repeat(180);
+
+        session.accept(answer);
+
+        assertTrue(session.hasEmitted(), "安全正文达到保留窗口后应在 SSE 尚未结束时输出");
+        session.finish();
+        assertFalse(session.blocked());
+        assertTrue(streamed.toString().equals(answer));
+    }
+
+    @Test
+    void doesNotEmitContinuousPromptFragmentAcrossChunks() {
+        String secret = "internal-policy-" + "x".repeat(140);
+        StringBuilder streamed = new StringBuilder();
+        SystemPromptLeakGuard.StreamingSession session = SystemPromptLeakGuard.streaming(secret, streamed::append);
+
+        session.accept(secret.substring(0, 70));
+        boolean allowed = session.accept(secret.substring(70));
+        session.finish();
+
+        assertFalse(allowed);
+        assertTrue(session.blocked());
+        assertTrue(streamed.isEmpty());
+    }
 }

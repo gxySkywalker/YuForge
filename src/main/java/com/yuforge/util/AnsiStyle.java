@@ -29,7 +29,8 @@ public final class AnsiStyle {
     }
 
     public static String answerMarker() {
-        return wrap(BOLD + GREEN, "▪");
+        // Windows Terminal 的部分字体会把几何符号渲染为问号；使用可读的 ASCII 前缀。
+        return wrap(BOLD + GREEN, "Assistant:");
     }
 
     public static String subtle(String text) {

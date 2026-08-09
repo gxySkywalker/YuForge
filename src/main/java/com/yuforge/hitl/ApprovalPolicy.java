@@ -17,7 +17,10 @@ public class ApprovalPolicy {
     // 需要人工确认的工具集合
     private static final Set<String> DANGEROUS_TOOLS = Set.of(
             "write_file",
+            "apply_patch",
             "execute_command",
+            "start_background_process",
+            "stop_background_process",
             "create_project",
             "revert_turn"
     );
@@ -38,8 +41,11 @@ public class ApprovalPolicy {
     public static String getDangerLevel(String toolName) {
         return switch (toolName) {
             case "execute_command" -> "🔴 高危";
+            case "start_background_process" -> "🔴 高危";
+            case "stop_background_process" -> "🟡 中危";
             case "revert_turn" -> "🔴 高危";
             case "write_file" -> "🟡 中危";
+            case "apply_patch" -> "🟡 中危";
             case "create_project" -> "🟡 中危";
             default -> isMcpTool(toolName) ? "🟡 MCP" : "🟢 安全";
         };
@@ -51,8 +57,11 @@ public class ApprovalPolicy {
     public static String getRiskDescription(String toolName) {
         return switch (toolName) {
             case "execute_command" -> "将在系统上执行 Shell 命令，可能修改文件、安装软件或影响系统状态";
+            case "start_background_process" -> "将在系统上启动并托管长期运行的开发服务，可能占用端口、CPU 或修改项目文件";
+            case "stop_background_process" -> "将停止本会话由 YuForge 启动的后台进程及其子进程";
             case "revert_turn" -> "将按 Side-Git 快照批量恢复工作区文件，可能覆盖当前未保存修改";
             case "write_file" -> "将写入或覆盖文件内容，原有内容将丢失";
+            case "apply_patch" -> "将精确替换已有文件中的文本片段，可能改变代码行为";
             case "create_project" -> "将在磁盘上创建新目录和文件";
             default -> isMcpTool(toolName)
                     ? "将调用外部 MCP server 提供的工具，可能访问网络、文件或第三方服务"

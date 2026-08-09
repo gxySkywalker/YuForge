@@ -1,0 +1,51 @@
+name: Release YuForge CLI
+
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build shaded CLI jar
+        run: mvn --batch-mode --no-transfer-progress clean package
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          mkdir -p release
+          cp target/yuforge-1.0-SNAPSHOT.jar "release/yuforge-${tag}.jar"
+          sha256sum "release/yuforge-${tag}.jar" > "release/yuforge-${tag}.jar.sha256"
+          jar_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/yuforge-${tag}.jar"
+          sed "s|__YUFORGE_RELEASE_JAR_URL__|${jar_url}|g" scripts/install.ps1 > release/install.ps1
+          sed "s|__YUFORGE_RELEASE_JAR_URL__|${jar_url}|g" scripts/install.sh > release/install.sh
+          chmod +x release/install.sh
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --clobber
+          else
+            gh release create "$tag" release/* --generate-notes --title "YuForge ${tag}"
+          fi

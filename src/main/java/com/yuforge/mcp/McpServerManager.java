@@ -136,7 +136,7 @@ public class McpServerManager implements AutoCloseable {
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("");
         long displaySeconds = Math.max(1, (long) Math.ceil(maxWait.toMillis() / 1000.0));
-        out.printf("⚠️ MCP 启动超过 %ds，先进入 CLI；后台继续启动: %s%n",
+        out.printf("[MCP] 启动超过 %ds，先进入 CLI；后台继续启动: %s%n",
                 displaySeconds, names);
         out.println("   可用 /mcp 查看最新状态，或 /mcp logs <name> 查看日志。");
         out.flush();
@@ -161,7 +161,7 @@ public class McpServerManager implements AutoCloseable {
                     }
                     for (McpServer server : starting) {
                         long waited = Duration.between(startedAt.get(server.name()), Instant.now()).toSeconds();
-                        out.printf("   ⏳ %-16s %-6s 启动中...（已等待 %ds）%n",
+                        out.printf("[MCP] %-16s %-6s 启动中...（已等待 %ds）%n",
                                 server.name(), server.transportName(), waited);
                     }
                     out.flush();
@@ -246,7 +246,7 @@ public class McpServerManager implements AutoCloseable {
     }
 
     public String formatStatus() {
-        StringBuilder sb = new StringBuilder("🔌 MCP Servers\n");
+        StringBuilder sb = new StringBuilder("[MCP] Servers\n");
         if (servers.isEmpty()) {
             sb.append("  未配置 MCP server。配置文件: ~/.yuforge/mcp.json 或 .yuforge/mcp.json");
             return sb.toString();
@@ -274,11 +274,11 @@ public class McpServerManager implements AutoCloseable {
 
     public String startupSummary() {
         if (servers.isEmpty()) {
-            return "🔌 MCP server：未配置（可创建 ~/.yuforge/mcp.json 或 .yuforge/mcp.json）";
+            return "[MCP] 未配置 server（可创建 ~/.yuforge/mcp.json 或 .yuforge/mcp.json）";
         }
         long ready = servers.values().stream().filter(s -> s.status() == McpServerStatus.READY).count();
         int tools = servers.values().stream().mapToInt(s -> s.tools().size()).sum();
-        StringBuilder sb = new StringBuilder("🔌 启动 MCP server（" + servers.size() + " 个）...\n");
+        StringBuilder sb = new StringBuilder("[MCP] 启动 server（" + servers.size() + " 个）...\n");
         for (McpServer server : servers()) {
             if (server.status() == McpServerStatus.READY) {
                 sb.append(String.format("   ✓ %-14s %-6s %3d 工具%n",

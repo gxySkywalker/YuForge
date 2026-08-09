@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yuforge.llm.LlmClient;
 import com.yuforge.memory.MemoryManager;
+import com.yuforge.render.Renderer;
 import com.yuforge.runtime.CancellationContext;
 import com.yuforge.tool.ToolRegistry;
 import com.yuforge.util.AnsiStyle;
@@ -51,6 +52,7 @@ public class AgentOrchestrator {
     private final MemoryManager memoryManager;
     private final ToolRegistry toolRegistry;
     private final PrintStream out;
+    private final Renderer renderer;
     private Supplier<String> externalContextSupplier = () -> "";
 
     // 执行步骤的数据结构（package-private 供测试访问）
@@ -92,8 +94,20 @@ public class AgentOrchestrator {
 
     public AgentOrchestrator(LlmClient llmClient, ToolRegistry toolRegistry,
                              MemoryManager memoryManager, PrintStream out) {
+        this(llmClient, toolRegistry, memoryManager, out, null);
+    }
+
+    public AgentOrchestrator(LlmClient llmClient, ToolRegistry toolRegistry,
+                             MemoryManager memoryManager, Renderer renderer) {
+        this(llmClient, toolRegistry, memoryManager,
+                renderer == null ? null : renderer.stream(), renderer);
+    }
+
+    private AgentOrchestrator(LlmClient llmClient, ToolRegistry toolRegistry,
+                              MemoryManager memoryManager, PrintStream out, Renderer renderer) {
         this.llmClient = llmClient;
         this.out = out == null ? System.out : out;
+        this.renderer = renderer;
         this.toolRegistry = toolRegistry;
         this.toolRegistry.setContextProfile(memoryManager.getContextProfile());
         this.toolRegistry.setCurrentModel(llmClient.getProviderName(), llmClient.getModelName());
@@ -105,6 +119,11 @@ public class AgentOrchestrator {
                 new SubAgent("worker-2", AgentRole.WORKER, llmClient, toolRegistry)
         );
         this.reviewer = new SubAgent("reviewer", AgentRole.REVIEWER, llmClient, toolRegistry);
+        if (renderer != null) {
+            this.planner.setRenderer(renderer);
+            this.workers.forEach(worker -> worker.setRenderer(renderer));
+            this.reviewer.setRenderer(renderer);
+        }
         this.memoryManager = memoryManager;
     }
 

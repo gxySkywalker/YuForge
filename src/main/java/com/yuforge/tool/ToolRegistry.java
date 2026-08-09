@@ -22,6 +22,7 @@ import com.yuforge.policy.PathGuard;
 import com.yuforge.memory.MemoryWritePolicy;
 import com.yuforge.policy.PolicyException;
 import com.yuforge.runtime.CancellationContext;
+import com.yuforge.runtime.process.ManagedProcessManager;
 import com.yuforge.runtime.todo.TodoTracker;
 import com.yuforge.snapshot.RestoreResult;
 import com.yuforge.snapshot.SnapshotService;
@@ -81,7 +82,16 @@ public class ToolRegistry {
     // 5MB 对常规代码生成 / 文档撰写完全够用，超过即拒，避免磁盘灌满与误覆盖。
     private static final int MAX_WRITE_FILE_BYTES = 5 * 1024 * 1024;
     // 需要审计的内置工具（与 ApprovalPolicy 的 DANGEROUS_TOOLS 保持一致）；MCP 工具按前缀动态纳入审计。
-    private static final Set<String> AUDIT_TOOLS = Set.of("write_file", "execute_command", "create_project", "revert_turn", "save_memory");
+    private static final Set<String> AUDIT_TOOLS = Set.of(
+            "write_file", "apply_patch", "execute_command", "start_background_process",
+            "stop_background_process", "create_project", "revert_turn", "save_memory"
+    );
+    // 这几类工具可能修改当前 workspace。第一次执行前由 SnapshotService 按需建立恢复点；
+    // 不把 save_memory 放入其中，它不修改项目文件。
+    private static final Set<String> WORKSPACE_MUTATING_TOOLS = Set.of(
+            "write_file", "apply_patch", "execute_command", "start_background_process", "create_project", "revert_turn"
+    );
+    private static final Set<String> WORKSPACE_TRUST_REQUIRED_TOOLS = AUDIT_TOOLS;
     private final Map<String, Tool> tools = new ConcurrentHashMap<>();
     private final Map<String, McpRegisteredTool> mcpTools = new ConcurrentHashMap<>();
     private final long commandTimeoutSeconds;
@@ -107,9 +117,11 @@ public class ToolRegistry {
     private java.util.function.BiConsumer<String, String[]> writeFileObserver = (p, ba) -> {};
     private LspManager lspManager = new LspManager(projectPath);
     private SnapshotService snapshotService = SnapshotService.forProject(Path.of(projectPath));
+    private ManagedProcessManager managedProcessManager = new ManagedProcessManager(Path.of(projectPath));
     private boolean customSnapshotService;
     private volatile String currentProvider = "";
     private volatile String currentModel = "";
+    private volatile boolean workspaceTrusted = true;
 
     public ToolRegistry() {
         this(DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_TOOL_BATCH_TIMEOUT_SECONDS);
@@ -139,8 +151,10 @@ public class ToolRegistry {
      * 设置代码检索的项目路径
      */
     public void setProjectPath(String projectPath) {
+        this.managedProcessManager.close();
         this.projectPath = projectPath;
         this.pathGuard = new PathGuard(projectPath);
+        this.managedProcessManager = new ManagedProcessManager(Path.of(projectPath));
         this.lspManager.setProjectPath(projectPath);
         if (!customSnapshotService) {
             this.snapshotService.close();
@@ -153,6 +167,18 @@ public class ToolRegistry {
      */
     public String getProjectPath() {
         return projectPath;
+    }
+
+    /**
+     * 未信任工作区保持只读：允许代码探索，但不能写入、执行命令、回滚、写记忆或调用 MCP。
+     * 默认 true 以保持嵌入式/非 CLI 调用的既有行为，CLI 会在启动时显式设置。
+     */
+    public void setWorkspaceTrusted(boolean workspaceTrusted) {
+        this.workspaceTrusted = workspaceTrusted;
+    }
+
+    public boolean isWorkspaceTrusted() {
+        return workspaceTrusted;
     }
 
     /** execute_command 当前实际使用的 shell；用于当前 user turn 的环境说明。 */
@@ -269,6 +295,11 @@ public class ToolRegistry {
         return snapshotService;
     }
 
+    /** 当前 CLI 会话拥有的后台开发进程；CLI 退出时会统一停止，避免遗留孤儿服务。 */
+    public void closeManagedProcesses() {
+        managedProcessManager.close();
+    }
+
     public void setSnapshotService(SnapshotService snapshotService) {
         this.snapshotService = snapshotService == null ? SnapshotService.forProject(Path.of(projectPath)) : snapshotService;
         this.customSnapshotService = snapshotService != null;
@@ -341,6 +372,19 @@ public class ToolRegistry {
                 }
         ));
 
+        tools.put("apply_patch", new Tool(
+                "apply_patch",
+                "精确修改已有文本文件。默认要求 old_string 在文件中恰好出现一次，避免整文件覆盖和过期上下文误改；"
+                        + "只有确实需要替换所有相同片段时才设 replace_all=true。先 read_file 确认目标片段，补丁后再测试、构建、诊断或读取验证。",
+                createParameters(
+                        new Param("path", "string", "已有文件的项目内相对路径", true),
+                        new Param("old_string", "string", "要被精确替换的原始文本，不能为空", true),
+                        new Param("new_string", "string", "替换后的文本；可为空以删除该片段", true),
+                        new Param("replace_all", "boolean", "是否替换所有非重叠匹配，默认 false", false)
+                ),
+                this::applyPatch
+        ));
+
         // list_dir 工具
         tools.put("list_dir", new Tool(
                 "list_dir",
@@ -393,6 +437,68 @@ public class ToolRegistry {
                 ),
                 args -> grepCode(args)
         ));
+    }
+
+    private String applyPatch(Map<String, String> args) {
+        String path = args.get("path");
+        String oldString = args.get("old_string");
+        String newString = args.get("new_string");
+        boolean replaceAll = Boolean.parseBoolean(args.getOrDefault("replace_all", "false"));
+        if (oldString == null || oldString.isEmpty()) {
+            return "补丁未应用: old_string 不能为空。请先 read_file 并提供要替换的精确原文。";
+        }
+        if (newString == null) {
+            return "补丁未应用: 缺少 new_string 参数。";
+        }
+        Path safe = pathGuard.resolveSafe(path);
+        if (!Files.isRegularFile(safe)) {
+            return "补丁未应用: 目标必须是已有的普通文本文件: " + path;
+        }
+        try {
+            String before = Files.readString(safe, StandardCharsets.UTF_8);
+            int matches = countNonOverlappingOccurrences(before, oldString);
+            if (matches == 0) {
+                return "补丁未应用: old_string 未在当前文件中找到；文件可能已变化。请重新 read_file 后再试。";
+            }
+            if (!replaceAll && matches != 1) {
+                return "补丁未应用: old_string 在当前文件中出现 " + matches
+                        + " 次。请提供更长且唯一的上下文，或在确认后设置 replace_all=true。";
+            }
+            String after = replaceAll ? before.replace(oldString, newString)
+                    : before.substring(0, before.indexOf(oldString))
+                    + newString
+                    + before.substring(before.indexOf(oldString) + oldString.length());
+            int contentBytes = after.getBytes(StandardCharsets.UTF_8).length;
+            if (contentBytes > MAX_WRITE_FILE_BYTES) {
+                throw new PolicyException("补丁后文件 " + contentBytes + " 字节超过 "
+                        + (MAX_WRITE_FILE_BYTES / 1024 / 1024) + "MB 上限");
+            }
+            Files.writeString(safe, after, StandardCharsets.UTF_8);
+            try {
+                writeFileObserver.accept(path, new String[]{before, after});
+            } catch (Exception ignored) {
+                // diff 渲染失败不能影响已完成的受控修改。
+            }
+            runPostEditLspHook(path, safe);
+            return "补丁已应用: " + path + "（替换 " + (replaceAll ? matches : 1) + " 处）";
+        } catch (PolicyException e) {
+            throw e;
+        } catch (Exception e) {
+            return "补丁应用失败: " + e.getMessage();
+        }
+    }
+
+    private static int countNonOverlappingOccurrences(String content, String target) {
+        int count = 0;
+        int from = 0;
+        while (true) {
+            int index = content.indexOf(target, from);
+            if (index < 0) {
+                return count;
+            }
+            count++;
+            from = index + target.length();
+        }
     }
 
     private String readFileForTool(Path file, Map<String, String> args) throws IOException {
@@ -568,6 +674,107 @@ public class ToolRegistry {
                 createParameters(new Param("command", "string", "要执行的命令", true)),
                 args -> executeCommand(args.get("command"))
         ));
+        tools.put("start_background_process", new Tool(
+                "start_background_process",
+                "在当前项目目录启动长期运行的开发服务（如 Spring Boot、Vite）。立即返回 process_id、PID 和日志路径；"
+                        + "随后使用 list_background_processes 查看状态、read_background_process_log 查看日志、stop_background_process 停止。"
+                        + "不要在 execute_command 中使用 &, Start-Process、nohup 或其他脱离托管的后台语法。服务只在本次 YuForge CLI 会话内托管，退出 CLI 时会自动停止。",
+                createParameters(new Param("command", "string", "启动开发服务的命令，例如 mvn spring-boot:run 或 npm run dev", true)),
+                args -> startBackgroundProcess(args.get("command"))
+        ));
+        tools.put("list_background_processes", new Tool(
+                "list_background_processes",
+                "列出本次 YuForge CLI 会话启动的后台开发进程及其 process_id、PID、状态和日志路径。",
+                createParameters(),
+                args -> listBackgroundProcesses()
+        ));
+        tools.put("read_background_process_log", new Tool(
+                "read_background_process_log",
+                "读取本会话后台开发进程的日志尾部。服务未就绪或异常时先读取日志，而不是盲目重复启动。",
+                createParameters(
+                        new Param("process_id", "string", "start_background_process 返回的 process_id", true),
+                        new Param("max_chars", "integer", "日志尾部最大字符数，默认 12000，上限 48000", false)
+                ),
+                args -> managedProcessManager.tail(args.get("process_id"), parseOptionalInteger(args.get("max_chars")))
+        ));
+        tools.put("inspect_background_process", new Tool(
+                "inspect_background_process",
+                "根据本会话后台服务的进程状态与日志诊断 ready/starting/failed/exited，并尽力提取 localhost 地址；不发起网络请求。",
+                createParameters(new Param("process_id", "string", "要诊断的 process_id", true)),
+                args -> formatProcessReadiness(managedProcessManager.inspectReadiness(args.get("process_id")))
+        ));
+        tools.put("wait_background_process_ready", new Tool(
+                "wait_background_process_ready",
+                "等待本会话后台开发服务出现就绪或失败信号，默认最多 30 秒、上限 60 秒。启动 Spring Boot/Vite 后优先使用它，而不是猜测服务已启动。",
+                createParameters(
+                        new Param("process_id", "string", "要等待的 process_id", true),
+                        new Param("timeout_seconds", "integer", "等待秒数，默认 30，最大 60", false)
+                ),
+                args -> formatProcessReadiness(managedProcessManager.waitForReadiness(
+                        args.get("process_id"), parseOptionalInteger(args.get("timeout_seconds"))))
+        ));
+        tools.put("stop_background_process", new Tool(
+                "stop_background_process",
+                "停止本会话由 YuForge 启动的后台开发进程及其子进程。只接受 list_background_processes 返回的 process_id。",
+                createParameters(new Param("process_id", "string", "要停止的 process_id", true)),
+                args -> stopBackgroundProcess(args.get("process_id"))
+        ));
+    }
+
+    private String startBackgroundProcess(String command) {
+        ManagedProcessManager.ProcessInfo info = managedProcessManager.start(command);
+        return "后台进程已启动\nprocess_id: " + info.id()
+                + "\npid: " + info.pid()
+                + "\n状态: " + info.status()
+                + "\n日志: " + info.logPath()
+                + "\n下一步: 用 read_background_process_log 读取启动日志；任务完成后用 stop_background_process 停止。";
+    }
+
+    private String listBackgroundProcesses() {
+        List<ManagedProcessManager.ProcessInfo> processes = managedProcessManager.list();
+        if (processes.isEmpty()) {
+            return "本会话尚未启动后台进程";
+        }
+        StringBuilder output = new StringBuilder("本会话后台进程:\n");
+        for (ManagedProcessManager.ProcessInfo info : processes) {
+            output.append("- ").append(info.id()).append(" | pid ").append(info.pid())
+                    .append(" | ").append(info.status());
+            if (info.exitCode() != null) {
+                output.append(" | exit ").append(info.exitCode());
+            }
+            output.append(" | ").append(info.logPath())
+                    .append("\n  ").append(info.command()).append('\n');
+        }
+        return output.toString();
+    }
+
+    private String stopBackgroundProcess(String id) {
+        ManagedProcessManager.ProcessInfo info = managedProcessManager.stop(id);
+        return "后台进程已停止: " + info.id() + " (pid " + info.pid() + ")；日志保留在 " + info.logPath();
+    }
+
+    private static String formatProcessReadiness(ManagedProcessManager.ReadinessInfo readiness) {
+        StringBuilder output = new StringBuilder("服务诊断: ").append(readiness.status())
+                .append("\n进程状态: ").append(readiness.processStatus());
+        if (readiness.exitCode() != null) {
+            output.append(" (exit ").append(readiness.exitCode()).append(')');
+        }
+        if (readiness.endpoint() != null) {
+            output.append("\n地址: ").append(readiness.endpoint());
+        }
+        output.append("\n详情: ").append(readiness.detail());
+        return output.toString();
+    }
+
+    private static Integer parseOptionalInteger(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("max_chars 必须是整数");
+        }
     }
 
     /**
@@ -1202,6 +1409,14 @@ public class ToolRegistry {
         if (CancellationContext.isCancelled()) {
             return ToolOutput.text("用户取消了此次工具调用");
         }
+        if (requiresTrustedWorkspace(name) && !workspaceTrusted) {
+            boolean shouldAudit = shouldAudit(name);
+            String reason = "当前工作区未被信任；仅允许读取、搜索和分析。请重启 YuForge 后选择信任此目录，再执行 " + name;
+            if (shouldAudit) {
+                auditLog.record(AuditLog.AuditEntry.denyByPolicy(name, argumentsJson, reason, 0, null));
+            }
+            return ToolOutput.text("🛡️ 策略拒绝: " + reason);
+        }
         Tool tool = tools.get(name);
         if (tool == null) {
             return ToolOutput.text("未知工具: " + name);
@@ -1237,6 +1452,9 @@ public class ToolRegistry {
             Map<String, String> argMap = new HashMap<>();
             args.fields().forEachRemaining(entry ->
                     argMap.put(entry.getKey(), entry.getValue().asText()));
+            if (requiresWorkspaceSnapshot(name)) {
+                snapshotService.ensurePreTurnSnapshot();
+            }
             String result = tool.executor().execute(argMap);
             if (shouldAudit) {
                 auditLog.record(AuditLog.AuditEntry.allow(name, argumentsJson, elapsedMillis(start), auditMetadata));
@@ -1365,6 +1583,15 @@ public class ToolRegistry {
 
     private static boolean shouldAudit(String name) {
         return AUDIT_TOOLS.contains(name) || (name != null && name.startsWith("mcp__"));
+    }
+
+    protected boolean requiresTrustedWorkspace(String name) {
+        return WORKSPACE_TRUST_REQUIRED_TOOLS.contains(name) || (name != null && name.startsWith("mcp__"));
+    }
+
+    private static boolean requiresWorkspaceSnapshot(String name) {
+        // MCP 工具的副作用无法从 schema 可靠推断；沿用保守策略，在其首次调用前也留出恢复点。
+        return WORKSPACE_MUTATING_TOOLS.contains(name) || (name != null && name.startsWith("mcp__"));
     }
 
     private static String mcpDescription(McpToolDescriptor descriptor) {

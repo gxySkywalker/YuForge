@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -31,7 +32,7 @@ public class StdioTransport implements McpTransport {
 
     public StdioTransport(String command, List<String> args, Map<String, String> env, Path workingDir) throws IOException {
         List<String> commandLine = new ArrayList<>();
-        commandLine.add(command);
+        commandLine.add(resolveCommandForProcess(command));
         if (args != null) {
             commandLine.addAll(args);
         }
@@ -46,6 +47,41 @@ public class StdioTransport implements McpTransport {
         this.stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
         startStdoutReader();
         startStderrReader();
+    }
+
+    /**
+     * Windows 的 npm launcher 通常是 {@code npx.cmd} / {@code npm.cmd}。
+     * PowerShell 会依赖 PATHEXT 自动找到它们，但 Java ProcessBuilder 在部分
+     * 环境只尝试裸命令，导致 shell 中可用的 npx 在 MCP 子进程中报 CreateProcess error=2。
+     */
+    static String resolveCommandForProcess(String command) {
+        return resolveCommandForProcess(command, isWindows(), System.getenv("PATH"));
+    }
+
+    static String resolveCommandForProcess(String command, boolean windows, String path) {
+        if (command == null || command.isBlank() || !windows || hasFileExtension(command)
+                || path == null || path.isBlank()) {
+            return command;
+        }
+        for (String entry : path.split(";")) {
+            if (entry == null || entry.isBlank()) {
+                continue;
+            }
+            Path candidate = Path.of(entry.trim()).resolve(command + ".cmd");
+            if (Files.isRegularFile(candidate)) {
+                return candidate.toAbsolutePath().normalize().toString();
+            }
+        }
+        return command;
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win");
+    }
+
+    private static boolean hasFileExtension(String command) {
+        String fileName = Path.of(command).getFileName().toString();
+        return fileName.lastIndexOf('.') > 0;
     }
 
     @Override

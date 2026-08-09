@@ -173,6 +173,14 @@ class CliCommandParserTest {
     }
 
     @Test
+    void parsesDoctorSlashCommand() {
+        CliCommandParser.ParsedCommand command = CliCommandParser.parse("/doctor");
+
+        assertEquals(CliCommandParser.CommandType.DOCTOR, command.type());
+        assertNull(command.payload());
+    }
+
+    @Test
     void parsesExportSlashCommand() {
         CliCommandParser.ParsedCommand command = CliCommandParser.parse("/export");
 

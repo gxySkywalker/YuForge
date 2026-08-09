@@ -9,9 +9,8 @@ import java.util.Deque;
  * <p>维护一个双端队列，新注册的块成为"队尾活跃块"，之前的块被 freeze
  * （因为新输出意味着它们已经向上滚走，无法再覆盖重绘）。
  *
- * <p>{@link #toggleLast()} 永远只 toggle 队尾且尚未被后续输出污染的活跃块。
- * 一旦普通输出继续写入，调用方必须 {@link #freezeAll()}，避免用相对光标覆盖
- * 已经滚走的历史内容。
+ * <p>默认 inline transcript 只允许追加，不能依赖相对光标回退覆盖历史内容。
+ * 因此用户展开时只会把最近一个折叠块的细节追加到当前末尾；历史块不会重绘。
  */
 public final class BlockRegistry {
 
@@ -41,6 +40,17 @@ public final class BlockRegistry {
             return false;
         }
         return last.toggleForRedraw();
+    }
+
+    /** 默认普通滚屏安全展开：调用方只把详情追加到末尾，不支持回写收起历史。 */
+    synchronized FoldableBlock expandLastForAppend() {
+        FoldableBlock last = blocks.peekLast();
+        if (last == null || last.isFrozen() || last.isExpanded()) {
+            return null;
+        }
+        last.toggleForRedraw();
+        last.freeze();
+        return last;
     }
 
     /** 后续普通输出已经出现，所有现存块都不能再做原地覆盖重绘。 */

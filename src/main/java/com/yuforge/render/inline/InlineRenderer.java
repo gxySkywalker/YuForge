@@ -14,7 +14,6 @@ import org.jline.terminal.Terminal;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,10 +40,9 @@ public final class InlineRenderer implements Renderer {
     private final List<TranscriptEntry> transcript = new ArrayList<>();
     private final AtomicBoolean startupScreenPrinted = new AtomicBoolean(true);
     private volatile LineReader lineReader;
-    private int renderedRows;
-    private boolean redrawing;
     private volatile boolean started;
     private volatile boolean closed;
+    private volatile boolean simpleThinkingVisible;
 
     // —— 代码块折叠状态机字段（仅供 createTranscriptStream 内部使用）——
     private final StringBuilder lineBuffer = new StringBuilder();
@@ -62,12 +60,14 @@ public final class InlineRenderer implements Renderer {
         this.terminal = terminal;
         this.fallback = new PlainRenderer();
         this.out = out;
-        this.statusBar = TerminalCapabilities.supportsScrollRegion(terminal)
+        // Windows Terminal 在缩放、全屏和标签恢复时会重排普通滚屏；JLine Status 的底部保留区会留下残影。
+        // 默认使用 Codex 风格的普通 composer，底部 dock 仅作为显式实验开关保留。
+        this.statusBar = bottomDockEnabled() && TerminalCapabilities.supportsScrollRegion(terminal)
                 ? new BottomStatusBar(terminal, out)
                 : null;
-        this.activityDisplay = statusBar == null
-                ? null
-                : new InlineActivityDisplay(terminal, out, statusBar);
+        // 普通滚屏不维护 live area：它需要回退光标清理旧帧，在 resize、CJK 换行和异步
+        // 输出同时发生时无法可靠知道物理行。实验性 dock 也不改变这个默认约束。
+        this.activityDisplay = null;
         this.blockRegistry = new BlockRegistry();
         this.stream = createTranscriptStream(out);
     }
@@ -76,7 +76,6 @@ public final class InlineRenderer implements Renderer {
     public void beginTurn() {
         synchronized (transcriptLock) {
             transcript.clear();
-            renderedRows = 0;
             lineBuffer.setLength(0);
             inCodeBlock = false;
             codeBodyLines.clear();
@@ -114,12 +113,14 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public String inputPrompt() {
-        return "* ";
+        return "> ";
     }
 
     @Override
     public String inputRightPrompt() {
-        return "message / @path / @image · Esc clear";
+        // JLine right prompt 是独立浮层，Windows Terminal resize 后会留下旧列宽残影；
+        // 主输入保持为稳定的 Codex 式单行 composer，提示写入首屏即可。
+        return null;
     }
 
     @Override
@@ -149,7 +150,8 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public boolean supportsThinkingPanel() {
-        return activityDisplay != null;
+        // 普通滚屏模式仍保留显式 Thinking 状态，只是不使用 resize 时会残影的 live dock。
+        return true;
     }
 
     @Override
@@ -159,8 +161,15 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void beginThinking(String label) {
+        if (statusBar != null) {
+            statusBar.beginActivityTimer(label);
+        }
         if (activityDisplay != null && !closed) {
             activityDisplay.begin(label);
+        } else if (!closed && !simpleThinkingVisible) {
+            // 进入同一条 transcript，保证它与首个正文/工具卡片严格有序。
+            stream.println("· " + (label == null || label.isBlank() ? "Thinking" : label) + "…");
+            simpleThinkingVisible = true;
         }
     }
 
@@ -173,8 +182,14 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void endThinking() {
+        if (statusBar != null) {
+            statusBar.endActivityTimer();
+        }
         if (activityDisplay != null) {
             activityDisplay.end();
+        } else if (simpleThinkingVisible) {
+            // 普通滚屏只追加、从不回退清除 activity 行；正文会自然出现在其后。
+            simpleThinkingVisible = false;
         }
     }
 
@@ -208,6 +223,28 @@ public final class InlineRenderer implements Renderer {
         this.lineReader = lineReader;
     }
 
+    /** 供 CLI 的终端尺寸变化回调调用，避免底部 Status 按旧屏幕尺寸残留。 */
+    public void refreshAfterTerminalResize() {
+        if (statusBar != null) {
+            statusBar.refreshAfterTerminalResize();
+        }
+        LineReader reader = lineReader;
+        if (reader != null && reader.isReading()) {
+            reader.callWidget(LineReader.REDRAW_LINE);
+        }
+    }
+
+    private static boolean bottomDockEnabled() {
+        String property = System.getProperty("yuforge.inline.bottom-dock");
+        if (property != null && !property.isBlank()) {
+            return Boolean.parseBoolean(property);
+        }
+        String environment = System.getenv("YUFORGE_INLINE_BOTTOM_DOCK");
+        // Windows Terminal 会在缩放、全屏和标签恢复时重排普通 scrollback；即便是 JLine
+        // 托管的单行 Status 也可能残留旧帧。默认只使用 append-only transcript。
+        return environment != null && Boolean.parseBoolean(environment);
+    }
+
     /**
      * 在 LineReader 第一次进入 readLine 时打印首屏。
      *
@@ -217,8 +254,21 @@ public final class InlineRenderer implements Renderer {
      * 显示生命周期里处理。
      */
     public void installStartupScreen(List<String> lines) {
+        installStartupScreen(lines, null);
+    }
+
+    /**
+     * 安装首屏，并在首屏实际写入后触发一个一次性的后台初始化动作。
+     *
+     * <p>用于 MCP 这类不影响首个输入框可用性的慢初始化：先让用户看到稳定的
+     * Banner/composer，再启动后台连接，避免启动进度抢在首屏之前写入普通滚屏。
+     */
+    public void installStartupScreen(List<String> lines, Runnable afterStartupScreen) {
         LineReader reader = lineReader;
         if (reader == null || lines == null || lines.isEmpty()) {
+            if (afterStartupScreen != null) {
+                afterStartupScreen.run();
+            }
             return;
         }
         startupScreenPrinted.set(false);
@@ -228,6 +278,9 @@ public final class InlineRenderer implements Renderer {
             boolean ok = previous == null || previous.apply();
             if (startupScreenPrinted.compareAndSet(false, true)) {
                 reader.printAbove(joinLines(snapshot));
+                if (afterStartupScreen != null) {
+                    afterStartupScreen.run();
+                }
             }
             return ok;
         });
@@ -240,30 +293,13 @@ public final class InlineRenderer implements Renderer {
      * {@code * prompt}，避免同一条输入在屏幕上出现两次。
      */
     public void clearAcceptedInput(String input) {
-        if (terminal == null || closed) {
-            return;
-        }
-        int rows = acceptedInputRows(input);
-        synchronized (out) {
-            PrintWriter writer = terminal.writer();
-            if (writer != null) {
-                writer.print(clearAcceptedInputSequence(rows));
-                writer.flush();
-            } else {
-                out.print(clearAcceptedInputSequence(rows));
-                out.flush();
-            }
-            terminal.flush();
-        }
+        // JLine 已经负责 accept 后的输入行。过去按估算行数上移擦除会在 Windows Terminal
+        // resize、全屏切换和 CJK 自动换行后命中错误行；默认 transcript 因此不再改写它。
     }
 
     public void printSubmittedPrompt(String input) {
-        String visible = input == null ? "" : input.strip();
-        if (visible.isEmpty()) {
-            return;
-        }
-        int cols = Math.max(20, TerminalCapabilities.safeSize(terminal).getColumns() - 1);
-        emit(AnsiStyle.userMessageBlock(visible, cols) + "\n");
+        // 已提交输入由 LineReader 留在 scrollback。不要为了深色样式再打印一次，
+        // 否则既会重复，也会迫使 clearAcceptedInput 使用不可靠的相对光标定位。
     }
 
     @Override
@@ -280,7 +316,6 @@ public final class InlineRenderer implements Renderer {
         String rendered = entry.render();
         synchronized (transcriptLock) {
             transcript.add(entry);
-            renderedRows += estimateRows(rendered);
             emit(rendered);
         }
     }
@@ -331,13 +366,20 @@ public final class InlineRenderer implements Renderer {
         return blockRegistry;
     }
 
-    /** Main.java 用：Ctrl+O 触发内存态切换，然后重绘本轮 transcript。 */
+    /** Main.java 用：Ctrl+O 只把最近工具/代码块详情追加到末尾，绝不重绘历史。 */
     public boolean toggleLastBlock() {
-        boolean changed = blockRegistry.toggleLastForRedraw();
-        if (changed) {
-            redrawTranscript();
+        FoldableBlock block = blockRegistry.expandLastForAppend();
+        if (block == null) {
+            return false;
         }
-        return changed;
+        StringBuilder details = new StringBuilder(AnsiStyle.subtle("  ⏷ details\n"));
+        for (String line : block.currentLines()) {
+            details.append(line).append('\n');
+        }
+        synchronized (transcriptLock) {
+            emit(details.toString());
+        }
+        return true;
     }
 
     private PrintStream createTranscriptStream(PrintStream delegate) {
@@ -354,11 +396,6 @@ public final class InlineRenderer implements Renderer {
                 }
                 String text = new String(b, off, len, StandardCharsets.UTF_8);
                 synchronized (transcriptLock) {
-                    if (redrawing) {
-                        // 重绘期间 BlockEntry.render() 已经决定折叠/展开形态，原样转发不再走折叠状态机
-                        delegate.write(b, off, len);
-                        return;
-                    }
                     feedWithCodeBlockDetection(text);
                 }
             }
@@ -402,7 +439,6 @@ public final class InlineRenderer implements Renderer {
             String pending = AnsiStyle.subtle("  ⏳ generating " + label + "...\n");
             emit(pending);
             transcript.add(new TextEntry(pending));
-            renderedRows += estimateRows(pending);
             return;
         }
 
@@ -427,7 +463,6 @@ public final class InlineRenderer implements Renderer {
 
                 transcript.add(new BlockEntry(block));
                 emit(collapsedHeader + "\n");
-                renderedRows += estimateRows(collapsedHeader + "\n");
 
                 codeBodyLines.clear();
                 codeHeaderLine = null;
@@ -441,12 +476,11 @@ public final class InlineRenderer implements Renderer {
         // 非代码块：常规流式
         emit(line);
         transcript.add(new TextEntry(line));
-        renderedRows += estimateRows(line);
     }
 
     private LineReader activePrintAboveReader() {
         LineReader reader = lineReader;
-        if (reader == null || redrawing || closed) {
+        if (reader == null || closed) {
             return null;
         }
         try {
@@ -460,6 +494,10 @@ public final class InlineRenderer implements Renderer {
         if (text == null || text.isEmpty()) {
             return;
         }
+        text = stripTerminalEmoji(text);
+        if (text.isEmpty()) {
+            return;
+        }
         LineReader reader = activePrintAboveReader();
         if (reader != null) {
             reader.printAbove(text);
@@ -469,64 +507,31 @@ public final class InlineRenderer implements Renderer {
         out.flush();
     }
 
+    /**
+     * 部分 Windows Terminal 字体会把彩色 emoji 显示成问号。默认 CLI 只保留
+     * ASCII、CJK 和常规排版符号；模型/工具原始数据不受影响，仅清理最终终端副本。
+     */
+    static String stripTerminalEmoji(String text) {
+        StringBuilder clean = new StringBuilder(text.length());
+        for (int offset = 0; offset < text.length();) {
+            int codePoint = text.codePointAt(offset);
+            offset += Character.charCount(codePoint);
+            if ((codePoint >= 0x1F000 && codePoint <= 0x1FAFF)
+                    || (codePoint >= 0x2600 && codePoint <= 0x27BF)
+                    || codePoint == 0xFE0F || codePoint == 0x200D) {
+                continue;
+            }
+            clean.appendCodePoint(codePoint);
+        }
+        return clean.toString();
+    }
+
     private static String joinLines(List<String> lines) {
         if (lines == null || lines.isEmpty()) {
             return "";
         }
         String block = String.join("\n", lines);
         return block.endsWith("\n") ? block : block + "\n";
-    }
-
-    private int acceptedInputRows(String input) {
-        int cols = Math.max(1, TerminalCapabilities.safeSize(terminal).getColumns());
-        String text = input == null ? "" : input;
-        String[] parts = text.split("\\R", -1);
-        int rows = 0;
-        for (int i = 0; i < parts.length; i++) {
-            int cells = displayWidth(parts[i]) + (i == 0 ? displayWidth(inputPrompt()) : 0);
-            rows += Math.max(1, (cells + cols - 1) / cols);
-        }
-        return Math.max(1, rows);
-    }
-
-    static String clearAcceptedInputSequence(int rows) {
-        int count = Math.max(1, rows);
-        StringBuilder sb = new StringBuilder();
-        sb.append(AnsiSeq.moveUp(count)).append('\r');
-        for (int i = 0; i < count; i++) {
-            sb.append(AnsiSeq.CLEAR_LINE);
-            if (i < count - 1) {
-                sb.append('\n');
-            }
-        }
-        if (count > 1) {
-            sb.append(AnsiSeq.moveUp(count - 1));
-        }
-        sb.append('\r');
-        return sb.toString();
-    }
-
-    private static int displayWidth(String text) {
-        if (text == null || text.isEmpty()) {
-            return 0;
-        }
-        int width = 0;
-        for (int i = 0; i < text.length(); ) {
-            int cp = text.codePointAt(i);
-            width += isWideCodePoint(cp) ? 2 : 1;
-            i += Character.charCount(cp);
-        }
-        return width;
-    }
-
-    private static boolean isWideCodePoint(int cp) {
-        Character.UnicodeScript script = Character.UnicodeScript.of(cp);
-        return script == Character.UnicodeScript.HAN
-                || script == Character.UnicodeScript.HIRAGANA
-                || script == Character.UnicodeScript.KATAKANA
-                || script == Character.UnicodeScript.HANGUL
-                || (cp >= 0x1F300 && cp <= 0x1FAFF)
-                || (cp >= 0xFF01 && cp <= 0xFF60);
     }
 
     private static String stripAnsi(String s) {
@@ -565,120 +570,6 @@ public final class InlineRenderer implements Renderer {
             end--;
         }
         return s.substring(0, end);
-    }
-
-    private void redrawTranscript() {
-        synchronized (transcriptLock) {
-            if (transcript.isEmpty()) {
-                return;
-            }
-            LineReader reader = activePrintAboveReader();
-            if (reader != null) {
-                StringBuilder snapshot = new StringBuilder();
-                int rowsAfter = 0;
-                for (TranscriptEntry entry : transcript) {
-                    String rendered = entry.render();
-                    snapshot.append(rendered);
-                    rowsAfter += estimateRows(rendered);
-                }
-                renderedRows = rowsAfter;
-                reader.printAbove(snapshot.toString());
-                return;
-            }
-            redrawing = true;
-            try {
-                int rows = TerminalCapabilities.safeSize(terminal).getRows();
-                int maxMove = Math.max(1, rows - (statusBar == null ? 1 : 2));
-                int move = Math.min(renderedRows, maxMove);
-                if (move > 0) {
-                    out.print(AnsiSeq.moveUp(move));
-                }
-                out.print("\r");
-                out.print(AnsiSeq.CLEAR_TO_EOS);
-                int rowsAfter = 0;
-                for (TranscriptEntry entry : transcript) {
-                    String rendered = entry.render();
-                    out.print(rendered);
-                    rowsAfter += estimateRows(rendered);
-                }
-                renderedRows = rowsAfter;
-                out.flush();
-            } finally {
-                redrawing = false;
-            }
-        }
-    }
-
-    private int estimateRows(String text) {
-        if (text == null || text.isEmpty()) {
-            return 0;
-        }
-        int cols = Math.max(20, TerminalCapabilities.safeSize(terminal).getColumns());
-        int rows = 0;
-        int col = 0;
-        boolean sawVisible = false;
-        for (int i = 0; i < text.length(); i++) {
-            char ch = text.charAt(i);
-            if (ch == '\u001B') {
-                i = skipAnsi(text, i);
-                continue;
-            }
-            if (ch == '\r') {
-                col = 0;
-                continue;
-            }
-            if (ch == '\n') {
-                rows++;
-                col = 0;
-                sawVisible = false;
-                continue;
-            }
-            int width = displayWidth(ch);
-            if (width <= 0) {
-                continue;
-            }
-            sawVisible = true;
-            col += width;
-            if (col >= cols) {
-                rows++;
-                col = 0;
-                sawVisible = false;
-            }
-        }
-        if (sawVisible) {
-            rows++;
-        }
-        return rows;
-    }
-
-    private int skipAnsi(String text, int escIndex) {
-        int i = escIndex + 1;
-        if (i < text.length() && text.charAt(i) == '[') {
-            i++;
-            while (i < text.length()) {
-                char c = text.charAt(i);
-                if (c >= '@' && c <= '~') {
-                    return i;
-                }
-                i++;
-            }
-        }
-        return escIndex;
-    }
-
-    private int displayWidth(char ch) {
-        if (Character.isISOControl(ch)) {
-            return 0;
-        }
-        Character.UnicodeBlock block = Character.UnicodeBlock.of(ch);
-        if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                || block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION
-                || block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS
-                || block == Character.UnicodeBlock.HIRAGANA
-                || block == Character.UnicodeBlock.KATAKANA) {
-            return 2;
-        }
-        return 1;
     }
 
     private interface TranscriptEntry {

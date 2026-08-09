@@ -5,8 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Stream;
 
 final class ProjectMemoryInitializer {
     private ProjectMemoryInitializer() {
@@ -103,9 +105,9 @@ final class ProjectMemoryInitializer {
             donts.add("不把 `ROADMAP.md` 的未来计划写成已交付能力。");
             donts.add("不在交互主路径新增裸 `System.out.println`；优先走 `Renderer.stream()`。");
         } else {
-            architecture.add("优先沿用项目现有目录、框架和 helper；不要为局部改动新建无必要抽象。");
+            architecture.addAll(inspectArchitecture(root, readme));
+            architecture.add("优先沿用上述目录、框架和 helper；不要为局部改动新建无必要抽象。");
             architecture.add("代码定位先用文件名/符号/字符串搜索，再按需读取具体行段。");
-            architecture.add("改动公共行为时同步用户文档和相邻测试。");
             pitfalls.add("README、ROADMAP 或 issue 可能滞后；以代码实际行为和测试为准。");
             pitfalls.add("生成文件、构建产物、密钥和本地配置不要进入版本控制。");
             pitfalls.add("已有未提交改动默认视为用户改动，除非用户明确要求，不要回退。");
@@ -115,6 +117,106 @@ final class ProjectMemoryInitializer {
         }
 
         return new ProjectFacts(commands, description, architecture, pitfalls, donts);
+    }
+
+    /**
+     * 仅做有界的本地目录/配置扫描，不调用模型也不读取业务源码全文。
+     * `/init` 的目标是留下可验证的导航，而不是生成看似正确的架构故事。
+     */
+    private static List<String> inspectArchitecture(Path root, String readme) throws IOException {
+        List<String> facts = new ArrayList<>();
+        Path javaSource = root.resolve("src/main/java");
+        Path resources = root.resolve("src/main/resources");
+        if (Files.isDirectory(javaSource)) {
+            Path packageRoot = detectJavaPackageRoot(javaSource);
+            if (packageRoot != null) {
+                String relative = relative(root, packageRoot);
+                List<String> modules = childDirectories(packageRoot, 10);
+                if (!modules.isEmpty()) {
+                    facts.add("主 Java 包：`%s`；模块目录：`%s`。".formatted(relative,
+                            String.join("`、`", modules)));
+                } else {
+                    facts.add("主 Java 包：`%s`。".formatted(relative));
+                }
+            } else {
+                facts.add("Java 源码位于 `src/main/java`。 ");
+            }
+            findFirst(javaSource, "*Application.java", 6).ifPresent(entry ->
+                    facts.add("启动入口：`%s`。".formatted(relative(root, entry))));
+            long sourceFiles = countJavaFiles(javaSource, 8);
+            long testFiles = countJavaFiles(root.resolve("src/test/java"), 8);
+            facts.add("代码规模：`src/main/java` %d 个 Java 文件；`src/test/java` %d 个测试文件。"
+                    .formatted(sourceFiles, testFiles));
+            if (Files.isDirectory(resources)) {
+                List<String> configs = filesMatching(resources, "application", 4);
+                if (!configs.isEmpty()) {
+                    facts.add("运行配置：`src/main/resources/%s`。".formatted(String.join("`、src/main/resources/`", configs)));
+                }
+            }
+            String pom = readIfExists(root.resolve("pom.xml")).toLowerCase(Locale.ROOT);
+            List<String> stack = new ArrayList<>();
+            if (pom.contains("spring-boot")) stack.add("Spring Boot");
+            if (pom.contains("mybatis")) stack.add("MyBatis");
+            if (pom.contains("redis")) stack.add("Redis");
+            if (!stack.isEmpty()) facts.add("已声明技术栈：%s（以 `pom.xml` 为准）。".formatted(String.join(" + ", stack)));
+        } else if (Files.isRegularFile(root.resolve("package.json"))) {
+            List<String> dirs = childDirectories(root.resolve("src"), 10);
+            if (!dirs.isEmpty()) facts.add("前端源码目录：`src/%s`。".formatted(String.join("`、`", dirs)));
+            facts.add("运行脚本和依赖以 `package.json` 为准。 ");
+        } else {
+            List<String> dirs = childDirectories(root, 8);
+            if (!dirs.isEmpty()) facts.add("主要目录：`%s`。".formatted(String.join("`、`", dirs)));
+        }
+        return facts;
+    }
+
+    private static Path detectJavaPackageRoot(Path sourceRoot) throws IOException {
+        List<Path> first = childDirectoryPaths(sourceRoot, 4);
+        if (first.size() != 1) return null;
+        List<Path> second = childDirectoryPaths(first.get(0), 8);
+        if (second.size() == 1 && childDirectoryPaths(second.get(0), 2).size() > 0) return second.get(0);
+        return first.get(0);
+    }
+
+    private static List<String> childDirectories(Path directory, int limit) throws IOException {
+        return childDirectoryPaths(directory, limit).stream().map(path -> path.getFileName().toString()).toList();
+    }
+
+    private static List<Path> childDirectoryPaths(Path directory, int limit) throws IOException {
+        if (!Files.isDirectory(directory)) return List.of();
+        try (Stream<Path> paths = Files.list(directory)) {
+            return paths.filter(Files::isDirectory)
+                    .filter(path -> !path.getFileName().toString().startsWith("."))
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                    .limit(limit)
+                    .toList();
+        }
+    }
+
+    private static java.util.Optional<Path> findFirst(Path root, String glob, int maxDepth) throws IOException {
+        try (Stream<Path> paths = Files.find(root, maxDepth,
+                (path, attrs) -> attrs.isRegularFile() && path.getFileName().toString().endsWith("Application.java"))) {
+            return paths.sorted().findFirst();
+        }
+    }
+
+    private static List<String> filesMatching(Path root, String prefix, int limit) throws IOException {
+        try (Stream<Path> paths = Files.find(root, 2,
+                (path, attrs) -> attrs.isRegularFile() && path.getFileName().toString().startsWith(prefix))) {
+            return paths.sorted().limit(limit).map(path -> relative(root, path)).toList();
+        }
+    }
+
+    private static long countJavaFiles(Path root, int maxDepth) throws IOException {
+        if (!Files.isDirectory(root)) return 0L;
+        try (Stream<Path> paths = Files.find(root, maxDepth,
+                (path, attrs) -> attrs.isRegularFile() && path.getFileName().toString().endsWith(".java"))) {
+            return paths.count();
+        }
+    }
+
+    private static String relative(Path root, Path path) {
+        return root.relativize(path).toString().replace('\\', '/');
     }
 
     private static String projectName(Path root, String readme) {

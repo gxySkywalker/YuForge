@@ -51,4 +51,27 @@ class ProjectMemoryInitializerTest {
         assertTrue(result.written());
         assertTrue(Files.readString(tempDir.resolve("YUFORGE.md")).contains("# YUFORGE.md"));
     }
+
+    @Test
+    void readsBoundedArchitectureFactsForSpringProject() throws Exception {
+        Files.writeString(tempDir.resolve("README.md"), "# hm-dianping\n");
+        Files.writeString(tempDir.resolve("pom.xml"), "<project>spring-boot mybatis redis</project>");
+        Path packageRoot = tempDir.resolve("src/main/java/com/hmdp");
+        Files.createDirectories(packageRoot.resolve("controller"));
+        Files.createDirectories(packageRoot.resolve("service"));
+        Files.createDirectories(packageRoot.resolve("mapper"));
+        Files.writeString(packageRoot.resolve("HmDianPingApplication.java"), "class HmDianPingApplication {}");
+        Path resources = tempDir.resolve("src/main/resources");
+        Files.createDirectories(resources);
+        Files.writeString(resources.resolve("application.yaml"), "server: {}\n");
+
+        String content = ProjectMemoryInitializer.generate(tempDir);
+
+        assertTrue(content.contains("src/main/java/com/hmdp"), content);
+        assertTrue(content.contains("controller"), content);
+        assertTrue(content.contains("HmDianPingApplication.java"), content);
+        assertTrue(content.contains("src/main/resources/application.yaml"), content);
+        assertTrue(content.contains("Spring Boot + MyBatis + Redis"), content);
+        assertTrue(content.contains("代码规模：`src/main/java` 1 个 Java 文件"), content);
+    }
 }

@@ -16,6 +16,7 @@ import com.yuforge.prompt.ProjectMemoryLoader;
 import com.yuforge.prompt.RuntimeContextFormatter;
 import com.yuforge.runtime.CancellationContext;
 import com.yuforge.render.ReasoningDisplayPolicy;
+import com.yuforge.render.Renderer;
 import com.yuforge.skill.SkillContextBuffer;
 import com.yuforge.skill.SkillIndexFormatter;
 import com.yuforge.skill.SkillRegistry;
@@ -110,6 +111,7 @@ public class PlanExecuteAgent {
     private final MemoryManager memoryManager;
     private final ConversationHistoryCompactor historyCompactor;
     private final PrintStream out;
+    private final Renderer renderer;
     private Supplier<String> externalContextSupplier = () -> "";
     private SkillRegistry skillRegistry;
     private SkillContextBuffer skillContextBuffer;
@@ -132,19 +134,33 @@ public class PlanExecuteAgent {
     public PlanExecuteAgent(LlmClient llmClient, ToolRegistry toolRegistry,
                             MemoryManager memoryManager, PlanReviewHandler reviewHandler,
                             PrintStream out) {
-        this(llmClient, toolRegistry, null, memoryManager, reviewHandler, out);
+        this(llmClient, toolRegistry, null, memoryManager, reviewHandler, out, null);
+    }
+
+    public PlanExecuteAgent(LlmClient llmClient, ToolRegistry toolRegistry,
+                            MemoryManager memoryManager, PlanReviewHandler reviewHandler,
+                            Renderer renderer) {
+        this(llmClient, toolRegistry, null, memoryManager, reviewHandler,
+                renderer == null ? null : renderer.stream(), renderer);
     }
 
     PlanExecuteAgent(LlmClient llmClient, ToolRegistry toolRegistry, Planner planner,
                      MemoryManager memoryManager, PlanReviewHandler reviewHandler) {
-        this(llmClient, toolRegistry, planner, memoryManager, reviewHandler, null);
+        this(llmClient, toolRegistry, planner, memoryManager, reviewHandler, null, null);
     }
 
     PlanExecuteAgent(LlmClient llmClient, ToolRegistry toolRegistry, Planner planner,
                      MemoryManager memoryManager, PlanReviewHandler reviewHandler, PrintStream out) {
+        this(llmClient, toolRegistry, planner, memoryManager, reviewHandler, out, null);
+    }
+
+    private PlanExecuteAgent(LlmClient llmClient, ToolRegistry toolRegistry, Planner planner,
+                             MemoryManager memoryManager, PlanReviewHandler reviewHandler,
+                             PrintStream out, Renderer renderer) {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry != null ? toolRegistry : new ToolRegistry();
         this.out = out == null ? deferredSystemOut() : out;
+        this.renderer = renderer;
         this.planner = planner != null ? planner : new Planner(llmClient, this.out);
         this.reviewHandler = reviewHandler == null ? (goal, plan) -> PlanReviewDecision.execute() : reviewHandler;
         this.memoryManager = memoryManager != null ? memoryManager : new MemoryManager(llmClient);
@@ -484,7 +500,7 @@ public class PlanExecuteAgent {
 
         StringBuilder allResults = new StringBuilder();
         int iteration = 0;
-        TaskStreamRenderer streamRenderer = new TaskStreamRenderer(task.getId(), streamState, out);
+        TaskStreamRenderer streamRenderer = new TaskStreamRenderer(task.getId(), streamState, out, renderer);
         ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
 
         int totalInputTokens = 0;
@@ -502,6 +518,7 @@ public class PlanExecuteAgent {
             injectPendingLspDiagnostics(messages, out);
             maybeCompactHistory(messages, out);
 
+            streamRenderer.beginThinking();
             LlmClient.ChatResponse response = llmClient.chat(
                     messages,
                     llmClient.supportsTools() ? toolRegistry.getToolDefinitions() : null,
@@ -673,7 +690,11 @@ public class PlanExecuteAgent {
         }
     }
 
-    private static void printToolCalls(PrintStream out, List<LlmClient.ToolCall> toolCalls) {
+    private void printToolCalls(PrintStream out, List<LlmClient.ToolCall> toolCalls) {
+        if (renderer != null && out == renderer.stream()) {
+            renderer.appendToolCalls(toolCalls);
+            return;
+        }
         Map<String, List<LlmClient.ToolCall>> grouped = new LinkedHashMap<>();
         for (LlmClient.ToolCall tc : toolCalls) {
             grouped.computeIfAbsent(tc.function().name(), k -> new ArrayList<>()).add(tc);
@@ -695,8 +716,15 @@ public class PlanExecuteAgent {
         return switch (toolName) {
             case "read_file" -> "📖 读取 " + count + " 个文件";
             case "write_file" -> "✏️ 写入 " + count + " 个文件";
+            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
             case "list_dir" -> "📂 列出 " + count + " 个目录";
             case "execute_command" -> "⚡ 执行 " + count + " 条命令";
+            case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
+            case "list_background_processes" -> "🧭 查看后台服务";
+            case "read_background_process_log" -> "📜 查看服务日志";
+            case "inspect_background_process" -> "🩺 诊断后台服务";
+            case "wait_background_process_ready" -> "⏳ 等待服务就绪";
+            case "stop_background_process" -> "⏹️ 停止后台服务";
             case "create_project" -> "🏗️ 创建 " + count + " 个项目";
             case "search_code" -> "🔍 搜索代码 " + count + " 次";
             case "web_search" -> "🌐 联网搜索 " + count + " 次";
@@ -720,8 +748,10 @@ public class PlanExecuteAgent {
         try {
             JsonNode node = JSON_MAPPER.readTree(argsJson);
             String key = switch (toolName) {
-                case "read_file", "write_file", "list_dir" -> "path";
+                case "read_file", "write_file", "apply_patch", "list_dir" -> "path";
                 case "execute_command" -> "command";
+                case "start_background_process" -> "command";
+                case "read_background_process_log", "stop_background_process" -> "process_id";
                 case "create_project" -> "name";
                 case "search_code", "web_search" -> "query";
                 case "web_fetch" -> "url";
@@ -757,6 +787,7 @@ public class PlanExecuteAgent {
         private final String taskId;
         private final StreamState streamState;
         private final PrintStream out;
+        private final Renderer renderer;
         private final StringBuilder pendingReasoning = new StringBuilder();
         private final StringBuilder lateReasoning = new StringBuilder();
         private TerminalMarkdownRenderer reasoningRenderer;
@@ -765,10 +796,19 @@ public class PlanExecuteAgent {
         private boolean contentStarted;
         private boolean streamedOutput;
 
-        private TaskStreamRenderer(String taskId, StreamState streamState, PrintStream out) {
+        private TaskStreamRenderer(String taskId, StreamState streamState, PrintStream out, Renderer renderer) {
             this.taskId = taskId;
             this.streamState = streamState;
             this.out = out;
+            this.renderer = renderer;
+        }
+
+        private void beginThinking() {
+            if (renderer != null && renderer.supportsThinkingPanel()) renderer.beginThinking("Thinking");
+        }
+
+        private void endThinking() {
+            if (renderer != null && renderer.supportsThinkingPanel()) renderer.endThinking();
         }
 
         @Override
@@ -806,6 +846,7 @@ public class PlanExecuteAgent {
             if (delta == null || delta.isEmpty()) {
                 return;
             }
+            endThinking();
             if (!contentStarted) {
                 if (reasoningStarted && reasoningRenderer != null) {
                     reasoningRenderer.finish();
@@ -831,6 +872,7 @@ public class PlanExecuteAgent {
         }
 
         private synchronized void finish() {
+            endThinking();
             if (streamedOutput) {
                 if (reasoningRenderer != null) {
                     reasoningRenderer.finish();
@@ -848,6 +890,7 @@ public class PlanExecuteAgent {
          * 让下一轮迭代能重新打印 🧠 / 🤖 标题，避免标题和内容被 HITL / 工具执行中断而错位。
          */
         private synchronized void resetBetweenIterations() {
+            endThinking();
             if (reasoningRenderer != null) {
                 reasoningRenderer.finish();
                 reasoningRenderer = null;

@@ -32,6 +32,7 @@ import com.yuforge.plan.ExecutionPlan;
 import com.yuforge.rag.CodeIndex;
 import com.yuforge.hitl.ApprovalPolicy;
 import com.yuforge.policy.AuditLog;
+import com.yuforge.policy.WorkspaceTrustStore;
 import com.yuforge.rag.CodeRetriever;
 import com.yuforge.rag.CodeRelation;
 import com.yuforge.rag.SearchResultFormatter;
@@ -91,6 +92,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -263,11 +265,15 @@ public class Main {
                     .highlighter(new YuForgeHighlighter())
                     .build();
             lineReader.option(LineReader.Option.BRACKETED_PASTE, true);
-            lineReader.option(LineReader.Option.AUTO_LIST, true);
-            lineReader.option(LineReader.Option.AUTO_MENU, true);
+            lineReader.option(LineReader.Option.AUTO_LIST, false);
+            lineReader.option(LineReader.Option.AUTO_MENU, false);
             configureHistory(lineReader, Path.of(System.getProperty("user.home")));
             configureSlashCommandHint(lineReader);
             configureJLineInteractiveWidgets(lineReader);
+            if (!confirmWorkspaceTrust(lineReader, terminal, hitlToolRegistry, Path.of("."))) {
+                return;
+            }
+            clearTerminalBeforeMainScreen(terminal);
 
             // JLine-first：启动输出、命令输出、Agent 流式内容都走同一条 Renderer.stream() 通道。
             // inline 首屏要挂到 LineReader 首次初始化回调里，避免在 readLine 接管屏幕前用裸输出抢光标。
@@ -276,6 +282,10 @@ public class Main {
             hitlHandler.setDelegate(rendererHitl);
             if (renderer instanceof InlineRenderer inline) {
                 inline.bindLineReader(lineReader);
+                terminal.handle(Terminal.Signal.WINCH, signal -> {
+                    refreshTerminalColumns(terminal);
+                    inline.refreshAfterTerminalResize();
+                });
             }
             PrintStream ui = renderer.stream();
             renderer.start();
@@ -288,7 +298,6 @@ public class Main {
                     startupNote = bootstrapResult.message();
                 }
                 mcpServerManager.loadConfiguredServers();
-                mcpServerManager.startAll(ui, mcpStartupWait());
                 Runtime.getRuntime().addShutdownHook(new Thread(mcpServerManager::close, "yuforge-mcp-shutdown"));
             } catch (Exception e) {
                 startupNote = "MCP 初始化失败: " + e.getMessage();
@@ -316,6 +325,8 @@ public class Main {
             hitlToolRegistry.setSkillContextBuffer(skillContextBuffer);
 
             Agent reactAgent = new Agent(llmClient, hitlToolRegistry);
+            Runtime.getRuntime().addShutdownHook(new Thread(
+                    reactAgent.getToolRegistry()::closeManagedProcesses, "yuforge-process-shutdown"));
             reactAgent.setExternalContextSupplier(mcpServerManager::resourceIndexForPrompt);
             reactAgent.setSkillRegistry(skillRegistry);
             reactAgent.setSkillContextBuffer(skillContextBuffer);
@@ -327,9 +338,11 @@ public class Main {
             renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "idle"));
             StartupScreenInfo startupScreenInfo = startupScreenInfo(llmClient, mcpServerManager, skillRegistry, startupNote);
             if (renderer instanceof InlineRenderer inline) {
-                inline.installStartupScreen(startupScreenLines(startupScreenInfo));
+                inline.installStartupScreen(startupScreenLines(startupScreenInfo),
+                        () -> startMcpInBackground(mcpServerManager));
             } else {
                 printStartupScreen(ui, startupScreenInfo);
+                startMcpInBackground(mcpServerManager);
             }
             boolean nextTaskUsePlanMode = false;
             boolean nextTaskUseTeamMode = false;
@@ -487,6 +500,15 @@ public class Main {
                         ui.println();
                         continue;
                     }
+                    case DOCTOR -> {
+                        ui.println(EnvironmentDoctor.report(
+                                Path.of(reactAgent.getToolRegistry().getProjectPath()),
+                                config,
+                                llmClient.getProviderName(),
+                                llmClient.getModelName(),
+                                mcpDoctorSummary(mcpServerManager)));
+                        continue;
+                    }
                     case MEMORY_STATUS -> {
                         ui.println("📋 记忆系统状态：");
                         ui.println(reactAgent.getMemoryManager().getSystemStatus());
@@ -588,7 +610,8 @@ public class Main {
                             Agent.SessionCheckpointResult result = reactAgent.resumeSessionCheckpoint(sessionId);
                             if (result.succeeded()) {
                                 renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, "idle"));
-                                ui.println("▶ 已恢复会话 " + result.sessionId() + " (" + result.messageCount()
+                                replayRestoredConversation(ui, reactAgent.getConversationHistory(), result.sessionId());
+                                ui.println("[Session] 已恢复 " + result.sessionId() + " (" + result.messageCount()
                                         + " 条消息)。旧 artifact 原文不会跨会话恢复。\n");
                             } else {
                                 ui.println("❌ 恢复会话失败: " + result.error() + "\n");
@@ -865,7 +888,7 @@ public class Main {
                     snapshotMode = "plan";
                     LlmClient activeClient = llmClient;
                     runTask = () -> {
-                        PlanExecuteAgent planAgent = createPlanAgent(activeClient, reactAgent, terminal, lineReader, ui);
+                        PlanExecuteAgent planAgent = createPlanAgent(activeClient, reactAgent, terminal, lineReader, renderer, ui);
                         planAgent.setExternalContextSupplier(mcpServerManager::resourceIndexForPrompt);
                         planAgent.setSkillRegistry(skillRegistry);
                         planAgent.setSkillContextBuffer(skillContextBuffer);
@@ -875,7 +898,7 @@ public class Main {
                     snapshotMode = "team";
                     LlmClient activeClient = llmClient;
                     runTask = () -> {
-                        AgentOrchestrator orchestrator = createTeamAgent(activeClient, reactAgent, ui);
+                        AgentOrchestrator orchestrator = createTeamAgent(activeClient, reactAgent, renderer, ui);
                         orchestrator.setExternalContextSupplier(mcpServerManager::resourceIndexForPrompt);
                         orchestrator.setSkillSystem(skillRegistry, skillContextBuffer);
                         return orchestrator.run(taskInput);
@@ -886,6 +909,9 @@ public class Main {
                 }
                 SnapshotService snapshotService = reactAgent.getToolRegistry().getSnapshotService();
                 renderer.updateStatus(statusInfo(reactAgent, mcpServerManager, skillRegistry, snapshotMode));
+                // 纯聊天/只读任务不建快照；首次可能改动 workspace 的工具才按需建立 pre-turn 快照。
+                // 先给出统一工作反馈，避免首个 LLM 请求的网络等待看起来像无响应。
+                renderer.beginThinking("Thinking");
                 String response = runWithCancelSupport(terminal,
                         ui,
                         () -> snapshotService.runTurn(snapshotMode, taskInput, runTask::call));
@@ -907,6 +933,59 @@ public class Main {
             System.err.println("❌ 终端初始化失败: " + e.getMessage());
             System.exit(1);
         }
+    }
+
+    /**
+     * 在初始化 YuForge 主界面之前完成工作区信任确认，避免未验证目录的配置、MCP 和项目上下文先进入会话。
+     */
+    private static boolean confirmWorkspaceTrust(LineReader lineReader, Terminal terminal,
+                                                 HitlToolRegistry toolRegistry, Path workspace) {
+        WorkspaceTrustStore trustStore = WorkspaceTrustStore.forCurrentUser();
+        Path normalizedWorkspace = workspace.toAbsolutePath().normalize();
+        if (trustStore.isTrusted(normalizedWorkspace)) {
+            toolRegistry.setWorkspaceTrusted(true);
+            return true;
+        }
+
+        toolRegistry.setWorkspaceTrusted(false);
+        java.io.PrintWriter ui = terminal.writer();
+        ui.println();
+        ui.println("> You are in " + normalizedWorkspace);
+        ui.println();
+        ui.println("Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt");
+        ui.println("injection. Trusting the directory allows project-local config, hooks, and exec policies to load.");
+        ui.println();
+        ui.println("  1. Yes, continue");
+        ui.println("  2. No, quit");
+        ui.println();
+        ui.flush();
+        try {
+            String response = lineReader.readLine("Press Enter to continue [1/2] ").trim();
+            if ("2".equals(response) || "n".equalsIgnoreCase(response) || "no".equalsIgnoreCase(response)) {
+                ui.println("YuForge did not open this untrusted workspace.");
+                ui.flush();
+                return false;
+            }
+            trustStore.trust(normalizedWorkspace);
+            toolRegistry.setWorkspaceTrusted(true);
+            return true;
+        } catch (UserInterruptException | EndOfFileException e) {
+            return false;
+        } catch (Exception e) {
+            ui.println("Could not save the workspace trust decision: " + e.getMessage());
+            ui.flush();
+            return false;
+        }
+    }
+
+    /** 信任页是独立的 preflight；确认后清掉它及输入回显，再交给 JLine 渲染主界面。 */
+    private static void clearTerminalBeforeMainScreen(Terminal terminal) {
+        if (terminal == null) {
+            return;
+        }
+        terminal.puts(org.jline.utils.InfoCmp.Capability.clear_screen);
+        terminal.puts(org.jline.utils.InfoCmp.Capability.cursor_home);
+        terminal.flush();
     }
 
     private static boolean isRuntimeServeCommand(String[] args) {
@@ -1144,20 +1223,20 @@ public class Main {
     }
 
     private static PlanExecuteAgent createPlanAgent(LlmClient llmClient, Agent reactAgent,
-                                                    Terminal terminal, LineReader lineReader, PrintStream out) {
+                                                    Terminal terminal, LineReader lineReader, Renderer renderer, PrintStream out) {
         out.println("📋 使用 Plan-and-Execute 模式\n");
         return new PlanExecuteAgent(
                 llmClient,
                 reactAgent.getToolRegistry(),
                 reactAgent.getMemoryManager(),
                 createPlanReviewHandler(terminal, lineReader, out),
-                out
+                renderer
         );
     }
 
-    private static AgentOrchestrator createTeamAgent(LlmClient llmClient, Agent reactAgent, PrintStream out) {
+    private static AgentOrchestrator createTeamAgent(LlmClient llmClient, Agent reactAgent, Renderer renderer, PrintStream out) {
         out.println("👥 使用 Multi-Agent 协作模式\n");
-        return new AgentOrchestrator(llmClient, reactAgent.getToolRegistry(), reactAgent.getMemoryManager(), out);
+        return new AgentOrchestrator(llmClient, reactAgent.getToolRegistry(), reactAgent.getMemoryManager(), renderer);
     }
 
     private static String runWithCancelSupport(Terminal terminal, PrintStream out, Callable<String> task) {
@@ -1642,6 +1721,7 @@ public class Main {
                 new SlashCommandHint("/init --force", "/init --force", "重写项目级记忆 YUFORGE.md"),
                 new SlashCommandHint("/history clear", "/history clear", "清空本机输入历史"),
                 new SlashCommandHint("/context", "/context", "查看上下文和记忆状态"),
+                new SlashCommandHint("/doctor", "/doctor", "检查本机开发环境、当前模型配置与 MCP 状态"),
                 new SlashCommandHint("/memory", "/memory", "查看记忆状态"),
                 new SlashCommandHint("/memory list", "/memory list", "查看当前项目和 global 长期记忆"),
                 new SlashCommandHint("/memory search ", "/memory search <关键词>", "搜索当前项目可见长期记忆"),
@@ -1659,6 +1739,20 @@ public class Main {
                 new SlashCommandHint("/export", "/export", "导出当前会话对话记录为 Markdown"),
                 new SlashCommandHint("/exit", "/exit", "退出 YuForge"),
                 new SlashCommandHint("/quit", "/quit", "退出 YuForge")
+        );
+    }
+
+    /** 单独输入 / 时展示的高频入口；完整命令仍由 Tab 与 README 提供。 */
+    static List<SlashCommandHint> slashCommandDiscoveryHints() {
+        return List.of(
+                new SlashCommandHint("/model", "/model", "查看或切换模型"),
+                new SlashCommandHint("/plan", "/plan", "规划复杂任务"),
+                new SlashCommandHint("/team", "/team", "多 Agent 协作"),
+                new SlashCommandHint("/init", "/init", "生成项目记忆 YUFORGE.md"),
+                new SlashCommandHint("/context", "/context", "查看上下文状态"),
+                new SlashCommandHint("/clear", "/clear", "清空当前会话"),
+                new SlashCommandHint("/compact", "/compact", "压缩当前上下文"),
+                new SlashCommandHint("/exit", "/exit", "退出 YuForge")
         );
     }
 
@@ -1680,6 +1774,14 @@ public class Main {
         }
         lineReader.getWidgets().put("yuforge-slash-command-hint", () -> {
             lineReader.getBuffer().write("/");
+            // 只在单独输入 / 时由 JLine 自己展示轻量候选；它拥有输入行布局，
+            // 不向 transcript 写浮层，也不需要相对光标回退。
+            lineReader.option(LineReader.Option.AUTO_LIST, true);
+            try {
+                lineReader.callWidget(LineReader.COMPLETE_WORD);
+            } finally {
+                lineReader.option(LineReader.Option.AUTO_LIST, false);
+            }
             return true;
         });
         Reference slashHint = new Reference("yuforge-slash-command-hint");
@@ -2208,6 +2310,16 @@ public class Main {
         out.println();
     }
 
+    private static String mcpDoctorSummary(McpServerManager manager) {
+        if (manager == null || manager.servers().isEmpty()) {
+            return "未配置 server";
+        }
+        long ready = manager.servers().stream()
+                .filter(server -> "READY".equals(server.status().name()))
+                .count();
+        return ready + "/" + manager.servers().size() + " 个 server 就绪";
+    }
+
     static String handleBrowserCommand(String payload,
                                        BrowserSession browserSession,
                                        BrowserConnectivityCheck connectivityCheck,
@@ -2462,6 +2574,34 @@ public class Main {
         }
     }
 
+    /** 把已恢复会话回放到新终端；system prompt 与大型/敏感工具原文不展示。 */
+    static void replayRestoredConversation(PrintStream out, List<LlmClient.Message> messages, String sessionId) {
+        if (out == null || messages == null) {
+            return;
+        }
+        out.println("[Session] 恢复历史: " + sessionId);
+        for (LlmClient.Message message : messages) {
+            if (message == null || "system".equals(message.role())) {
+                continue;
+            }
+            String content = message.content() == null ? "" : message.content().trim();
+            switch (message.role()) {
+                case "user" -> {
+                    if (!content.isBlank()) out.println("> " + content);
+                }
+                case "assistant" -> {
+                    if (!content.isBlank()) out.println("Assistant: " + content);
+                    if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
+                        out.println("  [tools] " + message.toolCalls().size() + " calls (details are not replayed)");
+                    }
+                }
+                case "tool" -> out.println("  [tool result] restored as a safe placeholder");
+                default -> { }
+            }
+        }
+        out.println();
+    }
+
     private static void printStartupHints(PrintStream out) {
         out.println("💡 提示:");
         for (String hint : startupHints()) {
@@ -2514,6 +2654,20 @@ public class Main {
                                          String phase) {
         StatusInfo base = reactAgent.currentStatus(phase);
         return base.withEnvironment(mcpStatusSummary(mcpServerManager), skillStatusSummary(skillRegistry));
+    }
+
+    /**
+     * MCP 尤其是 npx/uvx server 的冷启动可能需要下载依赖。它不应阻塞 CLI 首屏，
+     * 也不应在 Banner 之前输出进度文本；连接状态可随时用 /mcp 查看。
+     */
+    private static void startMcpInBackground(McpServerManager mcpServerManager) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                mcpServerManager.startAll(null, mcpStartupWait());
+            } catch (RuntimeException ignored) {
+                // server 状态和错误由 /mcp、/mcp logs 暴露，不能让后台异常污染输入区。
+            }
+        });
     }
 
     private static String mcpStatusSummary(McpServerManager mcpServerManager) {
@@ -2881,9 +3035,7 @@ public class Main {
     static List<String> startupBannerLines(StartupScreenInfo info) {
         String model = info.model() == null || info.model().isBlank() ? "auto" : info.model();
         String provider = info.provider() == null || info.provider().isBlank() ? "model" : info.provider();
-        String mcp = info.mcpTotal() <= 0
-                ? "MCP not configured"
-                : "MCP " + info.mcpReady() + "/" + info.mcpTotal() + " · " + info.mcpTools() + " tools";
+        String mcp = startupMcpSummary(info.mcpReady(), info.mcpTotal(), info.mcpTools());
         String skills = info.skillsTotal() <= 0
                 ? "0 skills"
                 : info.skillsEnabled() + "/" + info.skillsTotal() + " skills";
@@ -2907,6 +3059,21 @@ public class Main {
             lines.add(AnsiStyle.subtle(info.note().replace('\n', ' ')));
         }
         return lines;
+    }
+
+    /**
+     * The first screen is intentionally rendered before MCP startup begins.  Do not present
+     * that pre-start snapshot as a failed or empty connection: it only means the configured
+     * servers are still being started in the background.
+     */
+    static String startupMcpSummary(long ready, int total, int tools) {
+        if (total <= 0) {
+            return "MCP not configured";
+        }
+        if (ready < total) {
+            return "MCP " + total + " configured · starting in background";
+        }
+        return "MCP " + ready + "/" + total + " · " + tools + " tools";
     }
 
     static McpConfigBootstrapResult ensureDefaultMcpConfig(Path userHome) throws IOException {

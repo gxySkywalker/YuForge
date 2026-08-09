@@ -34,6 +34,84 @@ class ToolRegistryTest {
     }
 
     @Test
+    void shouldKeepUntrustedWorkspaceReadOnly(@TempDir Path tempDir) throws Exception {
+        Files.writeString(tempDir.resolve("readme.txt"), "safe to read");
+        ToolRegistry registry = new ToolRegistry();
+        registry.setProjectPath(tempDir.toString());
+        registry.setWorkspaceTrusted(false);
+
+        String readResult = registry.executeTool("read_file", "{\"path\":\"readme.txt\"}");
+        String writeResult = registry.executeTool("write_file", "{\"path\":\"blocked.txt\",\"content\":\"nope\"}");
+        String commandResult = registry.executeTool("execute_command", "{\"command\":\"echo should-not-run\"}");
+        String backgroundResult = registry.executeTool("start_background_process", "{\"command\":\"java -version\"}");
+
+        assertTrue(readResult.contains("safe to read"), readResult);
+        assertTrue(writeResult.contains("工作区未被信任"), writeResult);
+        assertTrue(commandResult.contains("工作区未被信任"), commandResult);
+        assertTrue(backgroundResult.contains("工作区未被信任"), backgroundResult);
+        assertFalse(Files.exists(tempDir.resolve("blocked.txt")));
+    }
+
+    @Test
+    void shouldStartManagedBackgroundProcess(@TempDir Path tempDir) throws Exception {
+        ToolRegistry registry = new ToolRegistry();
+        registry.setProjectPath(tempDir.toString());
+        try {
+            String started = registry.executeTool("start_background_process", "{\"command\":\"java -version\"}");
+            assertTrue(started.contains("process_id: proc_"), started);
+            String listed = registry.executeTool("list_background_processes", "{}");
+            assertTrue(listed.contains("java -version"), listed);
+
+            String id = started.lines()
+                    .filter(line -> line.startsWith("process_id: "))
+                    .findFirst()
+                    .orElseThrow()
+                    .substring("process_id: ".length());
+            String log = "日志尚未产生";
+            for (int i = 0; i < 40 && !log.toLowerCase().contains("version"); i++) {
+                Thread.sleep(50);
+                log = registry.executeTool("read_background_process_log",
+                        "{\"process_id\":\"" + id + "\",\"max_chars\":4000}");
+            }
+            assertTrue(log.toLowerCase().contains("version"), log);
+        } finally {
+            registry.closeManagedProcesses();
+            Thread.sleep(200);
+        }
+    }
+
+    @Test
+    void shouldApplyUniqueTextPatch(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("Sample.java");
+        Files.writeString(file, "class Sample {\n    String name = \"old\";\n}\n");
+        ToolRegistry registry = new ToolRegistry();
+        registry.setProjectPath(tempDir.toString());
+
+        String result = registry.executeTool("apply_patch", """
+                {"path":"Sample.java","old_string":"String name = \\\"old\\\";","new_string":"String name = \\\"new\\\";"}
+                """);
+
+        assertTrue(result.contains("补丁已应用"), result);
+        assertTrue(Files.readString(file).contains("String name = \"new\";"));
+    }
+
+    @Test
+    void shouldRejectAmbiguousTextPatchWithoutWriting(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("Sample.java");
+        String before = "class Sample {\n    int value = 1;\n    int value = 1;\n}\n";
+        Files.writeString(file, before);
+        ToolRegistry registry = new ToolRegistry();
+        registry.setProjectPath(tempDir.toString());
+
+        String result = registry.executeTool("apply_patch", """
+                {"path":"Sample.java","old_string":"int value = 1;","new_string":"int value = 2;"}
+                """);
+
+        assertTrue(result.contains("出现 2 次"), result);
+        assertEquals(before, Files.readString(file));
+    }
+
+    @Test
     void shouldRejectMemoryWriteWithoutOriginalUserAuthorization() {
         ToolRegistry registry = new ToolRegistry();
         AtomicReference<String> saved = new AtomicReference<>();
@@ -219,7 +297,10 @@ class ToolRegistryTest {
         ToolRegistry registry = new ToolRegistry(1);
         registry.setProjectPath(tempDir.toString());
 
-        String result = registry.executeTool("execute_command", "{\"command\":\"sleep 2\"}");
+        String command = System.getProperty("os.name", "").toLowerCase().contains("win")
+                ? "Start-Sleep -Seconds 2"
+                : "sleep 2";
+        String result = registry.executeTool("execute_command", "{\"command\":\"" + command + "\"}");
 
         assertTrue(result.contains("命令执行超时"), result);
     }

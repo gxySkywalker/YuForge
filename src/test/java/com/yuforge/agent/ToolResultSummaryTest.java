@@ -27,11 +27,13 @@ class ToolResultSummaryTest {
         ToolExecutionResult result = new ToolExecutionResult("id", "execute_command", "{\"command\":\"echo $SECRET\"}",
                 "command output: super-secret", 2200L, false, List.of(),
                 new ToolResultDiagnostic(ToolResultDiagnostic.Status.ERROR,
-                        ToolResultDiagnostic.ErrorCode.COMMAND_FAILED, true, ""));
+                        ToolResultDiagnostic.ErrorCode.COMMAND_FAILED, true,
+                        "先分析退出码和输出中的首个根因；修正命令、工作目录或依赖后再重试。"));
 
         String summary = ToolResultSummary.format(result);
 
         assertTrue(summary.contains("⚠ 执行命令失败 (COMMAND_FAILED) · 2.2s"), summary);
+        assertTrue(summary.contains("建议：先分析退出码和输出中的首个根因"), summary);
         assertFalse(summary.contains("super-secret"), summary);
     }
 

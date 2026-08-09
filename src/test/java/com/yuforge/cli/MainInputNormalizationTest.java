@@ -72,12 +72,29 @@ class MainInputNormalizationTest {
     }
 
     @Test
+    void startupMcpSummaryDoesNotPresentDeferredStartupAsZeroTools() {
+        assertEquals("MCP 1 configured · starting in background", Main.startupMcpSummary(0, 1, 0));
+        assertEquals("MCP 1/1 · 29 tools", Main.startupMcpSummary(1, 1, 29));
+        assertEquals("MCP not configured", Main.startupMcpSummary(0, 0, 0));
+    }
+
+    @Test
     void slashCommandTailTipsExposeCommandDescriptions() {
         var tips = Main.slashCommandTailTips();
 
         assertTrue(tips.containsKey("/model"));
         assertTrue(tips.get("/model").getMainDesc().get(0).toString().contains("查看当前模型"));
         assertTrue(tips.containsKey("/plan <任务内容>"));
+    }
+
+    @Test
+    void slashDiscoveryIsCompactAndIncludesProjectInitialization() {
+        List<Main.SlashCommandHint> hints = Main.slashCommandDiscoveryHints();
+
+        assertTrue(hints.stream().anyMatch(hint -> hint.insertText().equals("/init")));
+        assertTrue(hints.stream().anyMatch(hint -> hint.insertText().equals("/plan")));
+        assertTrue(hints.stream().anyMatch(hint -> hint.insertText().equals("/model")));
+        assertTrue(hints.size() <= 10, "slash discovery must stay scannable");
     }
 
     @Test
@@ -133,6 +150,25 @@ class MainInputNormalizationTest {
         assertTrue(emitted.contains(">"), emitted);
         assertTrue(emitted.contains("/memory list"), emitted);
         assertEquals(1, emitted.chars().filter(ch -> ch == '\n').count(), emitted);
+    }
+
+    @Test
+    void restoredSessionReplaysUserAndAssistantWithoutSystemPromptOrToolBody() {
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        List<LlmClient.Message> messages = List.of(
+                LlmClient.Message.system("secret system prompt"),
+                LlmClient.Message.user("查看项目"),
+                LlmClient.Message.assistant("这是 Spring Boot 项目"),
+                LlmClient.Message.tool("call-1", "large tool result"));
+
+        Main.replayRestoredConversation(new PrintStream(sink, true, StandardCharsets.UTF_8), messages, "session_demo");
+
+        String replay = sink.toString(StandardCharsets.UTF_8);
+        assertTrue(replay.contains("> 查看项目"), replay);
+        assertTrue(replay.contains("Assistant: 这是 Spring Boot 项目"), replay);
+        assertTrue(replay.contains("[tool result] restored as a safe placeholder"), replay);
+        assertFalse(replay.contains("secret system prompt"), replay);
+        assertFalse(replay.contains("large tool result"), replay);
     }
 
     @Test

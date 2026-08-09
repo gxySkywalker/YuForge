@@ -14,8 +14,21 @@ class ApprovalPolicyTest {
     }
 
     @Test
+    void applyPatchRequiresApproval() {
+        assertTrue(ApprovalPolicy.requiresApproval("apply_patch"));
+        assertEquals("🟡 中危", ApprovalPolicy.getDangerLevel("apply_patch"));
+    }
+
+    @Test
     void executeCommandRequiresApproval() {
         assertTrue(ApprovalPolicy.requiresApproval("execute_command"));
+    }
+
+    @Test
+    void managedProcessMutatorsRequireApproval() {
+        assertTrue(ApprovalPolicy.requiresApproval("start_background_process"));
+        assertTrue(ApprovalPolicy.requiresApproval("stop_background_process"));
+        assertEquals("🔴 高危", ApprovalPolicy.getDangerLevel("start_background_process"));
     }
 
     @Test
@@ -82,18 +95,22 @@ class ApprovalPolicyTest {
     }
 
     @Test
-    void getDangerousToolsContainsAllThree() {
+    void getDangerousToolsContainsAllBuiltinMutators() {
         Set<String> tools = ApprovalPolicy.getDangerousTools();
         assertTrue(tools.contains("write_file"));
+        assertTrue(tools.contains("apply_patch"));
         assertTrue(tools.contains("execute_command"));
+        assertTrue(tools.contains("start_background_process"));
+        assertTrue(tools.contains("stop_background_process"));
         assertTrue(tools.contains("create_project"));
         assertTrue(tools.contains("revert_turn"));
-        assertEquals(4, tools.size());
+        assertEquals(7, tools.size());
     }
 
     @Test
     void riskDescriptionNotBlankForDangerousTools() {
         assertFalse(ApprovalPolicy.getRiskDescription("write_file").isBlank());
+        assertFalse(ApprovalPolicy.getRiskDescription("apply_patch").isBlank());
         assertFalse(ApprovalPolicy.getRiskDescription("execute_command").isBlank());
         assertFalse(ApprovalPolicy.getRiskDescription("create_project").isBlank());
         assertFalse(ApprovalPolicy.getRiskDescription("revert_turn").isBlank());
@@ -132,7 +149,7 @@ class ApprovalPolicyTest {
     @Test
     void mcpToolStaysOutsideOfBuiltinDangerousTools() {
         // mcp__ 前缀不应污染 DANGEROUS_TOOLS 集合本身（保证 set 含义清晰）
-        assertEquals(4, ApprovalPolicy.getDangerousTools().size());
+        assertEquals(7, ApprovalPolicy.getDangerousTools().size());
         assertFalse(ApprovalPolicy.getDangerousTools().contains("mcp__demo__tool"));
     }
 }

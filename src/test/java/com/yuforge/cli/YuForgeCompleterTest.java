@@ -15,15 +15,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class YuForgeCompleterTest {
 
     @Test
-    void suggestsSlashCommandsWhenInputStartsWithSlash() {
+    void suggestsCompactDiscoveryCommandsWhenInputIsOnlySlash() {
         YuForgeCompleter completer = new YuForgeCompleter(List::of);
         List<Candidate> candidates = new ArrayList<>();
 
         completer.complete(null, parsed("/", "/"), candidates);
 
         assertTrue(candidates.stream().anyMatch(c -> c.displ().equals("/model")));
-        assertTrue(candidates.stream().anyMatch(c -> c.displ().equals("/browser connect")));
-        assertTrue(candidates.stream().anyMatch(c -> c.displ().equals("/search <查询>")));
+        assertTrue(candidates.stream().anyMatch(c -> c.displ().equals("/init")));
+        assertTrue(candidates.stream().anyMatch(c -> c.displ().equals("/plan")));
+        assertTrue(candidates.size() <= 8, candidates.toString());
     }
 
     @Test

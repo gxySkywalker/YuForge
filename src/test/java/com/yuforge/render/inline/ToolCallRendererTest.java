@@ -21,6 +21,7 @@ class ToolCallRendererTest {
                 tc("read_file", "{\"path\":\"b.md\"}")));
         String header = ToolCallRenderer.collapsedHeader(grouped);
         assertTrue(header.contains("⏵"), header);
+        assertTrue(header.contains("探索"), header);
         assertTrue(header.contains("读取 2 个文件"), header);
         assertTrue(header.contains("ctrl+o"), header);
     }
@@ -34,6 +35,18 @@ class ToolCallRendererTest {
 
         assertTrue(header.contains("WebSearch"), header);
         assertTrue(header.contains("沉默王二 程序员 博主"), header);
+    }
+
+    @Test
+    void processCallsExposeRunAndVerificationPhasesWithSafeKeyArguments() {
+        var run = ToolCallRenderer.group(List.of(
+                tc("start_background_process", "{\"command\":\"mvn spring-boot:run\"}")));
+        var ready = ToolCallRenderer.group(List.of(
+                tc("wait_background_process_ready", "{\"process_id\":\"service-42\"}")));
+
+        assertTrue(ToolCallRenderer.collapsedHeader(run).contains("运行 · ▶ Run(mvn spring-boot:run)"));
+        assertTrue(ToolCallRenderer.collapsedHeader(ready).contains("验证"));
+        assertTrue(ToolCallRenderer.collapsedHeader(ready).contains("service-42"));
     }
 
     @Test

@@ -3,7 +3,6 @@ package com.yuforge.render.inline;
 import com.yuforge.render.StatusInfo;
 import com.yuforge.util.AnsiStyle;
 import org.jline.terminal.Terminal;
-import org.jline.utils.InfoCmp;
 import org.jline.utils.AttributedString;
 import org.jline.utils.AttributedStringBuilder;
 import org.jline.utils.AttributedStyle;
@@ -12,6 +11,9 @@ import org.jline.utils.Status;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -68,6 +70,9 @@ public final class BottomStatusBar implements AutoCloseable {
     private Status status;
     private volatile boolean started;
     private volatile boolean closed;
+    private volatile String activityLabel;
+    private volatile long activityStartedNanos = -1L;
+    private ScheduledExecutorService activityTicker;
 
     public BottomStatusBar(Terminal terminal) {
         this.terminal = terminal;
@@ -87,9 +92,20 @@ public final class BottomStatusBar implements AutoCloseable {
         }
         status = Status.getStatus(terminal);
         if (status != null) {
-            status.setBorder(true);
+            // 单行无边框：输入框紧贴其上，且不会在 Windows Terminal resize 后留下旧边线。
+            status.setBorder(false);
         }
         started = true;
+        activityTicker = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "yuforge-status-timer");
+            thread.setDaemon(true);
+            return thread;
+        });
+        activityTicker.scheduleAtFixedRate(() -> {
+            if (activityStartedNanos > 0L && !closed) {
+                renderDock();
+            }
+        }, 200, 200, TimeUnit.MILLISECONDS);
         renderDock();
     }
 
@@ -108,14 +124,46 @@ public final class BottomStatusBar implements AutoCloseable {
         renderDock();
     }
 
-    /** 在即将读取输入时刷新 JLine dock；光标和输入行位置由 LineReader 管理。 */
+    /**
+     * Windows Terminal 缩放、恢复窗口或切换标签后，旧的 Status 滚动区可能仍按旧尺寸残留。
+     * 重建 JLine Status，而不是手写清屏或移动输入光标，保证新尺寸从干净 dock 开始绘制。
+     */
+    public synchronized void refreshAfterTerminalResize() {
+        if (!started || closed) {
+            return;
+        }
+        Status previous = status;
+        status = null;
+        if (previous != null) {
+            previous.close();
+        }
+        status = Status.getStatus(terminal);
+        if (status != null) {
+            status.setBorder(false);
+        }
+        renderDock();
+    }
+
+    /** 在即将读取输入时刷新 JLine dock；输入行位置由 LineReader 与 Status 共同维护。 */
     public void prepareInputLine() {
         renderDock();
-        moveCursorToDockInputRow();
     }
 
     /** 输入提交后保留底部 dock；正文继续在 JLine 保留区上方滚动。 */
     public void finishInputLine() {
+        renderDock();
+    }
+
+    /** 在底部单行状态中显示当前思考/工具阶段的实时耗时。 */
+    public void beginActivityTimer(String label) {
+        activityLabel = label == null || label.isBlank() ? "Thinking" : label.trim();
+        activityStartedNanos = System.nanoTime();
+        renderDock();
+    }
+
+    public void endActivityTimer() {
+        activityStartedNanos = -1L;
+        activityLabel = null;
         renderDock();
     }
 
@@ -127,22 +175,7 @@ public final class BottomStatusBar implements AutoCloseable {
         }
         int cols = TerminalCapabilities.safeSize(terminal).getColumns();
         synchronized (out) {
-            dock.update(formatStatusLines(info, cols));
-        }
-    }
-
-    private void moveCursorToDockInputRow() {
-        StatusInfo info = current;
-        if (info == null || closed || !started) {
-            return;
-        }
-        int rows = TerminalCapabilities.safeSize(terminal).getRows();
-        int cols = TerminalCapabilities.safeSize(terminal).getColumns();
-        int dockRows = formatStatusLines(info, cols).size() + 1; // JLine Status border.
-        int inputRow = inputDockRow(rows, dockRows);
-        synchronized (out) {
-            terminal.puts(InfoCmp.Capability.cursor_address, inputRow, 0);
-            terminal.flush();
+            dock.update(formatCompactStatusLines(info, cols, activityLabel, activityElapsedMillis()));
         }
     }
 
@@ -152,6 +185,10 @@ public final class BottomStatusBar implements AutoCloseable {
             return;
         }
         closed = true;
+        if (activityTicker != null) {
+            activityTicker.shutdownNow();
+            activityTicker = null;
+        }
         Status dock = status;
         status = null;
         if (dock != null) {
@@ -223,6 +260,29 @@ public final class BottomStatusBar implements AutoCloseable {
                 formatStatusLineAttributed(info, cols),
                 formatFooterLineAttributed(info, cols)
         );
+    }
+
+    /** 默认 CLI 使用的稳定单行状态：模型 + workspace，活动期间额外显示计时。 */
+    static List<AttributedString> formatCompactStatusLines(StatusInfo info, int cols,
+                                                            String activityLabel, long activityElapsedMillis) {
+        AttributedStringBuilder builder = new AttributedStringBuilder(Math.max(0, cols));
+        builder.append(" ", BASE_STYLE);
+        if (activityLabel != null && !activityLabel.isBlank()) {
+            builder.append(compact(activityLabel, Math.max(8, cols / 4), "Thinking"), PHASE_ACTIVE_STYLE);
+            builder.append(" " + formatElapsed(activityElapsedMillis) + " · ", ELAPSED_STYLE);
+        }
+        builder.append(compact(info.model(), Math.max(12, cols / 2), "Auto Model"), MODEL_STYLE);
+        String cwd = compactCwd();
+        if (!cwd.isBlank()) {
+            builder.append(" · ", BASE_STYLE);
+            builder.append(compact(cwd, Math.max(12, cols / 2), cwd), CWD_STYLE);
+        }
+        return List.of(fitToColumns(builder.toAttributedString(), cols));
+    }
+
+    private long activityElapsedMillis() {
+        long startedAt = activityStartedNanos;
+        return startedAt <= 0L ? 0L : Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
     }
 
     static AttributedString formatStatusLineAttributed(StatusInfo info, int cols) {

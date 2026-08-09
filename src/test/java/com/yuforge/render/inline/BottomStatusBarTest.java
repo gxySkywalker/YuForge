@@ -139,6 +139,19 @@ class BottomStatusBarTest {
     }
 
     @Test
+    void compactDockShowsModelWorkspaceAndLiveActivityTime() {
+        var lines = BottomStatusBar.formatCompactStatusLines(
+                StatusInfo.idle("deepseek-v4-flash", 1_000_000L, false),
+                100, "Thinking", 2300L);
+
+        assertEquals(1, lines.size());
+        String line = lines.get(0).toString();
+        assertTrue(line.contains("Thinking 2.3s"), line);
+        assertTrue(line.contains("deepseek-v4-flash"), line);
+        assertTrue(line.contains(System.getProperty("user.dir")), line);
+    }
+
+    @Test
     void statusLinesHighlightKeySegments() {
         StatusInfo info = StatusInfo.tokens("deepseek-v4-pro", 1_000_000L, 5200L, 16_100L,
                         437L, 14_300L, null, false, 0L, "idle")

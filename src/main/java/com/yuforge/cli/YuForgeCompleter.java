@@ -62,7 +62,10 @@ final class YuForgeCompleter implements Completer {
         String word = line.word() == null ? "" : line.word();
         int replacementStart = Math.max(0, prefix.length() - word.length());
 
-        for (Main.SlashCommandHint hint : Main.slashCommandHints()) {
+        List<Main.SlashCommandHint> hints = "/".equals(prefix)
+                ? Main.slashCommandDiscoveryHints()
+                : Main.slashCommandHints();
+        for (Main.SlashCommandHint hint : hints) {
             String command = hint.insertText();
             if (!command.startsWith(prefix)) {
                 continue;

@@ -262,8 +262,15 @@ public final class PlainRenderer implements Renderer {
         return switch (toolName) {
             case "read_file" -> "📖 读取 " + count + " 个文件";
             case "write_file" -> "✏️ 写入 " + count + " 个文件";
+            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
             case "list_dir" -> "📂 列出 " + count + " 个目录";
             case "execute_command" -> "⚡ 执行 " + count + " 条命令";
+            case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
+            case "list_background_processes" -> "🧭 查看后台服务";
+            case "read_background_process_log" -> "📜 查看服务日志";
+            case "inspect_background_process" -> "🩺 诊断后台服务";
+            case "wait_background_process_ready" -> "⏳ 等待服务就绪";
+            case "stop_background_process" -> "⏹️ 停止后台服务";
             case "create_project" -> "🏗️ 创建 " + count + " 个项目";
             case "search_code" -> "🔍 搜索代码 " + count + " 次";
             case "web_search" -> "🌐 联网搜索 " + count + " 次";
@@ -287,8 +294,10 @@ public final class PlainRenderer implements Renderer {
         try {
             JsonNode node = JSON.readTree(argsJson);
             String key = switch (toolName) {
-                case "read_file", "write_file", "list_dir" -> "path";
+                case "read_file", "write_file", "apply_patch", "list_dir" -> "path";
                 case "execute_command" -> "command";
+                case "start_background_process" -> "command";
+                case "read_background_process_log", "stop_background_process" -> "process_id";
                 case "create_project" -> "name";
                 case "search_code", "web_search" -> "query";
                 case "web_fetch" -> "url";

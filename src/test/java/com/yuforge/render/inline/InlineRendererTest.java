@@ -17,7 +17,9 @@ import java.io.OutputStreamWriter;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,7 +29,44 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InlineRendererTest {
 
     @Test
+    void terminalTranscriptStripsEmojiThatWindowsFontsRenderAsQuestionMarks() {
+        assertEquals("[MCP]  ready 读取", InlineRenderer.stripTerminalEmoji("[MCP] 🔌 ready 📖读取"));
+        assertTrue(InlineRenderer.stripTerminalEmoji("→ ✅ done").contains("→"));
+        assertFalse(InlineRenderer.stripTerminalEmoji("→ ✅ done").contains("✅"));
+    }
+
+    @Test
+    void startupCallbackRunsOnlyAfterBannerHasBeenPrinted() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        LineReader lineReader = Mockito.mock(LineReader.class);
+        java.util.Map<String, org.jline.reader.Widget> widgets = new HashMap<>();
+        Mockito.when(lineReader.getWidgets()).thenReturn(widgets);
+        AtomicBoolean callbackRan = new AtomicBoolean();
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.bindLineReader(lineReader);
+            renderer.installStartupScreen(List.of("YuForge"), () -> callbackRan.set(true));
+
+            assertFalse(callbackRan.get());
+            assertNotNull(widgets.get(LineReader.CALLBACK_INIT));
+            widgets.get(LineReader.CALLBACK_INIT).apply();
+
+            Mockito.verify(lineReader).printAbove("YuForge\n");
+            assertTrue(callbackRan.get());
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
     void onAnsiTerminalEnablesStatusBar() {
+        String previous = System.getProperty("yuforge.inline.bottom-dock");
+        System.setProperty("yuforge.inline.bottom-dock", "true");
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");
         Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
@@ -39,6 +78,32 @@ class InlineRendererTest {
             renderer.updateStatus(StatusInfo.idle("glm-5.1", 200_000L, false));
         } finally {
             renderer.close();
+            if (previous == null) {
+                System.clearProperty("yuforge.inline.bottom-dock");
+            } else {
+                System.setProperty("yuforge.inline.bottom-dock", previous);
+            }
+        }
+    }
+
+    @Test
+    void defaultInlineModeKeepsBottomDockDisabledForWindowsTerminalStability() {
+        String previous = System.getProperty("yuforge.inline.bottom-dock");
+        System.clearProperty("yuforge.inline.bottom-dock");
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+
+        InlineRenderer renderer = new InlineRenderer(terminal);
+        try {
+            assertFalse(renderer.hasStatusBar());
+        } finally {
+            renderer.close();
+            if (previous == null) {
+                System.clearProperty("yuforge.inline.bottom-dock");
+            } else {
+                System.setProperty("yuforge.inline.bottom-dock", previous);
+            }
         }
     }
 
@@ -198,9 +263,8 @@ class InlineRendererTest {
             renderer.afterInput();
 
             String emitted = sink.toString(StandardCharsets.UTF_8);
-            assertEquals("* ", renderer.inputPrompt());
-            assertTrue(renderer.inputRightPrompt().contains("@path"));
-            assertTrue(renderer.inputRightPrompt().contains("Esc clear"));
+            assertEquals("> ", renderer.inputPrompt());
+            assertEquals(null, renderer.inputRightPrompt());
             assertFalse(emitted.contains("[39;1H"), "LineReader should own the input row: " + emitted);
             assertFalse(emitted.contains("[37;1H"), "renderer should not force transcript cursor rows: " + emitted);
         } finally {
@@ -209,7 +273,27 @@ class InlineRendererTest {
     }
 
     @Test
-    void thinkingPanelRendersJLineActivityReasoningAndClears() {
+    void acceptedInputIsOwnedByJlineAndNeverClearedWithRelativeCursorMoves() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(32, 12));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.clearAcceptedInput("这是会在窄窗口换行的已提交输入");
+            renderer.printSubmittedPrompt("这是会在窄窗口换行的已提交输入");
+
+            assertEquals("", sink.toString(StandardCharsets.UTF_8));
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
+    void thinkingIsAStableTranscriptEventEvenWhenExperimentalDockIsEnabled() {
+        String previous = System.getProperty("yuforge.inline.bottom-dock");
+        System.setProperty("yuforge.inline.bottom-dock", "true");
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");
         Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
@@ -230,23 +314,23 @@ class InlineRendererTest {
             String rendered = sink.toString(StandardCharsets.UTF_8);
             assertTrue(renderer.supportsThinkingPanel());
             assertTrue(rendered.contains("Thinking"), rendered);
-            assertTrue(rendered.contains("先分析用户输入"), rendered);
-            assertTrue(rendered.contains("再检查状态栏边界"), rendered);
-            assertTrue(rendered.contains("|") || rendered.contains("│"),
-                    "activity display should show live reasoning quote content: " + rendered);
+            assertFalse(rendered.contains("先分析用户输入"), rendered);
+            assertFalse(rendered.contains(AnsiSeq.moveUp(1)), rendered);
 
             sink.reset();
             renderer.endThinking();
-            String cleared = sink.toString(StandardCharsets.UTF_8);
-            assertFalse(cleared.contains(AnsiSeq.CLEAR_TO_EOS),
-                    "activity clearing must not clear to screen end and erase transcript scrollback: " + cleared);
+            assertEquals("", sink.toString(StandardCharsets.UTF_8),
+                    "ending a stable Thinking event must not erase or add transcript rows");
         } finally {
             renderer.close();
+            restoreBottomDockProperty(previous);
         }
     }
 
     @Test
-    void activityPanelOmitsCancelHintForNonCancelableWork() {
+    void activityPanelIsDisabledForAppendOnlyInlineTranscript() {
+        String previous = System.getProperty("yuforge.inline.bottom-dock");
+        System.setProperty("yuforge.inline.bottom-dock", "true");
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");
         Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
@@ -264,21 +348,25 @@ class InlineRendererTest {
             renderer.beginActivity("Compacting conversation", "正在整理早期对话并生成摘要");
 
             String rendered = sink.toString(StandardCharsets.UTF_8);
-            assertTrue(renderer.supportsActivityPanel());
-            assertTrue(rendered.contains("Compacting conversation"), rendered);
-            assertTrue(rendered.contains("▰"), rendered);
-            assertTrue(rendered.contains("▱"), rendered);
-            assertTrue(rendered.contains("%"), rendered);
-            assertFalse(rendered.contains("正在整理早期对话"), rendered);
-            assertFalse(rendered.contains("esc to cancel"), rendered);
+            assertFalse(renderer.supportsActivityPanel());
+            assertEquals("", rendered);
         } finally {
             renderer.endActivity();
             renderer.close();
+            restoreBottomDockProperty(previous);
+        }
+    }
+
+    private static void restoreBottomDockProperty(String previous) {
+        if (previous == null) {
+            System.clearProperty("yuforge.inline.bottom-dock");
+        } else {
+            System.setProperty("yuforge.inline.bottom-dock", previous);
         }
     }
 
     @Test
-    void toggleLastBlockRedrawsTranscriptAroundToolBlock() {
+    void toggleLastBlockAppendsDetailsWithoutRewritingTranscript() {
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");
         Mockito.when(terminal.getSize()).thenReturn(new Size(120, 4));
@@ -295,11 +383,10 @@ class InlineRendererTest {
             assertTrue(renderer.toggleLastBlock());
 
             String emitted = sink.toString(StandardCharsets.UTF_8);
-            assertTrue(emitted.contains("before"), emitted);
             assertTrue(emitted.contains("README.md"), emitted);
-            assertTrue(emitted.contains("after"), emitted);
-            assertTrue(emitted.contains("collapse"), emitted);
-            assertTrue(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
+            assertTrue(emitted.contains("details"), emitted);
+            assertFalse(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
+            assertFalse(emitted.contains(AnsiSeq.moveUp(1)), emitted);
         } finally {
             renderer.close();
         }

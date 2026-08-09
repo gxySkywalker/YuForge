@@ -2,7 +2,10 @@ package com.yuforge.agent;
 
 import com.yuforge.llm.GLMClient;
 import com.yuforge.llm.LlmClient;
+import com.yuforge.render.ReasoningDisplayPolicy;
 import com.yuforge.tool.ToolRegistry;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -17,6 +20,23 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SubAgentTest {
+
+    private String previousReasoningSetting;
+
+    @BeforeEach
+    void enableRawReasoningForLegacyStreamFormattingAssertions() {
+        previousReasoningSetting = System.getProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY);
+        System.setProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY, "true");
+    }
+
+    @AfterEach
+    void restoreRawReasoningSetting() {
+        if (previousReasoningSetting == null) {
+            System.clearProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY);
+        } else {
+            System.setProperty(ReasoningDisplayPolicy.SYSTEM_PROPERTY, previousReasoningSetting);
+        }
+    }
 
     @Test
     void shouldOnlyEnableToolsForWorker() throws Exception {

@@ -68,6 +68,8 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
                 .map(Message::content)
                 .findFirst()
                 .orElse("");
+        SystemPromptLeakGuard.StreamingSession safeContentStream =
+                SystemPromptLeakGuard.streaming(systemPrompt, streamListener::onContentDelta);
         RequestBody body = RequestBody.create(
                 buildRequestBody(messages, tools).toString(),
                 MediaType.parse("application/json")
@@ -164,6 +166,7 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
                 String contentDelta = delta.path("content").asText("");
                 if (!contentDelta.isEmpty()) {
                     content.append(contentDelta);
+                    safeContentStream.accept(contentDelta);
                 }
 
                 mergeToolCallDeltas(toolAccumulators, delta.path("tool_calls"));
@@ -178,9 +181,12 @@ public abstract class AbstractOpenAiCompatibleClient implements LlmClient {
             if (decision.blocked()) {
                 log.warn("Blocked assistant output containing a continuous system-prompt fragment");
             }
-            // 正文在完整扫描后才提交到 renderer，防止流式通道先泄露、末端再拦截的竞态。
-            if ((toolCalls == null || toolCalls.isEmpty()) && !decision.safeContent().isEmpty()) {
-                streamListener.onContentDelta(decision.safeContent());
+            if (decision.blocked()) {
+                safeContentStream.discardPending();
+                // 已输出的前缀不含命中的连续片段；明确告知用户后续正文被安全策略截断。
+                streamListener.onContentDelta((safeContentStream.hasEmitted() ? "\n\n" : "") + decision.safeContent());
+            } else {
+                safeContentStream.finish();
             }
 
             return new ChatResponse(

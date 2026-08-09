@@ -34,6 +34,10 @@ public class HitlToolRegistry extends ToolRegistry {
 
     @Override
     public ToolOutput executeToolOutput(String name, String argumentsJson) {
+        // 工作区信任是能力边界，不应先弹出一个最终仍会被策略拒绝的 HITL 审批框。
+        if (requiresTrustedWorkspace(name) && !isWorkspaceTrusted()) {
+            return super.doExecuteTool(name, argumentsJson);
+        }
         if (requiresExternalContentApproval(name)) {
             BrowserCheckResult browserCheck = checkBrowserTool(name, argumentsJson, true);
             if (browserCheck.blocked()) {

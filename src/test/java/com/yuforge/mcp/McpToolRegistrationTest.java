@@ -31,7 +31,9 @@ class McpToolRegistrationTest {
 
             assertTrue(registry.hasTool("mcp__demo__echo"));
             assertTrue(registry.getToolDefinitions().stream().anyMatch(t -> t.name().equals("mcp__demo__echo")));
-            assertEquals("echo:{\"text\":\"hi\"}", registry.executeTool("mcp__demo__echo", "{\"text\":\"hi\"}"));
+            String result = registry.executeTool("mcp__demo__echo", "{\"text\":\"hi\"}");
+            assertTrue(result.contains("<untrusted_external_content source=\"mcp\""));
+            assertTrue(result.contains("echo:{\"text\":\"hi\"}"));
         });
     }
 
@@ -46,7 +48,8 @@ class McpToolRegistrationTest {
             List<ToolRegistry.ToolExecutionResult> results = registry.executeTools(List.of(
                     new ToolRegistry.ToolInvocation("call-1", "mcp__demo__echo", "{}")));
 
-            assertEquals("screenshot", results.get(0).result());
+            assertTrue(results.get(0).result().contains("<untrusted_external_content source=\"mcp\""));
+            assertTrue(results.get(0).result().contains("screenshot"));
             assertTrue(results.get(0).hasImageParts());
             assertEquals("image/png", results.get(0).imageParts().get(0).mimeType());
         });
@@ -103,7 +106,9 @@ class McpToolRegistrationTest {
             assertFalse(registry.hasTool("mcp__demo__old"));
             assertTrue(registry.hasTool("mcp__demo__new"));
             assertTrue(registry.hasTool("mcp__other__keep"));
-            assertEquals("new:new", registry.executeTool("mcp__demo__new", "{}"));
+            String result = registry.executeTool("mcp__demo__new", "{}");
+            assertTrue(result.contains("<untrusted_external_content source=\"mcp\""));
+            assertTrue(result.contains("new:new"));
         });
     }
 

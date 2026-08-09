@@ -160,6 +160,7 @@ public class Agent {
         long startNanos = System.nanoTime();
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
         ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
+        ChangeVerificationTracker verificationTracker = new ChangeVerificationTracker();
         pushStatus(budget, startNanos, "running");
 
         // 主退出条件 = LLM 自己决定（不再调用工具就返回）；
@@ -230,6 +231,7 @@ public class Agent {
                     List<ToolExecutionResult> toolResults = executeToolCalls(response.toolCalls(), iteration);
                     for (ToolExecutionResult toolResult : toolResults) {
                         memoryManager.addToolResult(toolResult.name(), toolResult.result());
+                        verificationTracker.observe(toolResult);
                         ToolAttemptTracker.Observation observation = attemptTracker.observe(toolResult);
                         conversationHistory.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
                     }
@@ -257,6 +259,9 @@ public class Agent {
                         response.content() == null ? 0 : response.content().length());
                 if (log.isDebugEnabled()) {
                     log.debug("Assistant answer preview: {}", preview(response.content(), 500));
+                }
+                if (verificationTracker.changedWorkspace()) {
+                    renderer().stream().println(verificationTracker.statusLine());
                 }
 
                 if (streamRenderer.hasStreamedOutput()) {

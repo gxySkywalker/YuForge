@@ -1,8 +1,133 @@
 # YuForge
 
-一个成熟的 Java Agent CLI 产品，对标 Claude Code 作者为沉默王二，从第一期的 `ReAct` 单代理循环逐步演进到第十六期的 `TUI 产品化`。
+> A production-minded Java Code Agent CLI for real codebases.
 
-当前进度：已完成第 16.1 期 inline 流式 TUI 形态修正、第 17 期 `LSP 诊断注入` MVP、第 18 期 `Git Side-History 快照与回滚` MVP、第 19 期 `Prompt 分层架构` MVP、第 20 期 `异步后台任务 + Runtime API` MVP、第 21 期 `图片复制粘贴输入` MVP、第 23 期 `微信 iLink 通道` 文本 MVP。
+面向真实代码库任务的 Java Code Agent CLI：让 Agent 完成 **理解 → 规划 → 修改 → 验证** 的开发闭环，而不只是生成一段代码或调用一次工具。
+
+![Java](https://img.shields.io/badge/Java-17%2B-ED8B00?logo=openjdk&logoColor=white)
+![Maven](https://img.shields.io/badge/build-Maven-C71A36?logo=apachemaven&logoColor=white)
+![MCP](https://img.shields.io/badge/protocol-MCP-7C3AED)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4B8BBE)
+
+[快速开始](#快速开始) · [核心能力](#核心能力) · [安装与发布](#安装与发布) · [架构文档](#架构设计文档) · [贡献与验证](#测试策略)
+
+<img src="docs/images/cli-command-completion.png" alt="YuForge CLI command discovery" width="900" />
+
+## 为什么是 YuForge
+
+| 真实问题 | YuForge 的处理方式 |
+| --- | --- |
+| 长任务越跑越长，滑动窗口会丢失工具结果 | 大工具结果归档 + 可按 `artifact_id` 恢复；按 user turn 进行结构化压缩 |
+| 动态 system prompt 降低 Prompt Cache 命中 | 稳定 system prefix；时间、工作目录、记忆等动态信息进入当前 user turn |
+| 网页/MCP 内容可能注入恶意指令 | 不可信来源标记 + HITL + PathGuard/CommandGuard + 记忆写入显式授权 |
+| Agent 修改了代码却无法证明完成 | 改动后区分“已修改”和“已验证”；构建、测试、ready 或回读才形成证据 |
+| Windows Terminal 缩放后终端错乱 | 默认 append-only transcript，不依赖易残影的相对光标重绘、右提示或动态 dock |
+
+## 核心能力
+
+- **Code Agent Runtime**：ReAct 为默认执行路径；复杂任务可切换 `/plan` 或 `/team`。
+- **真实代码库探索**：`glob_files → grep_code → read_file` 的实时探索路径，RAG 仅作为模糊语义检索补充。
+- **长上下文与记忆**：工具结果归档恢复、结构化压缩、项目级 `YUFORGE.md`、长期记忆和 checkpoint 会话恢复。
+- **安全工具调用**：HITL、工作区信任、PathGuard、CommandGuard、审计日志与 Prompt Injection 防护。
+- **MCP 与浏览器**：stdio / Streamable HTTP MCP、动态工具与 resources、Chrome DevTools MCP。
+- **跨平台 CLI**：JLine 交互、`/` 命令发现与 Tab 补全、可取消任务、Windows/macOS/Linux 安装入口。
+
+## 快速开始
+
+### 1. 安装
+
+**发布版（推荐）**：在 [GitHub Releases](../../releases) 下载与你的平台对应的安装脚本后执行。每个 Release 都包含 shaded jar、SHA-256 校验文件和 Windows/macOS/Linux 安装脚本；安装后会把 `yuforge` 加入当前用户 PATH。
+
+Windows PowerShell：
+
+```powershell
+# 安装最新发布版
+irm https://github.com/gxySkywalker/YuForge/releases/latest/download/install.ps1 | iex
+
+# 打开一个新终端
+yuforge
+```
+
+macOS / Linux：
+
+```bash
+# 安装最新发布版
+curl -fsSL https://github.com/gxySkywalker/YuForge/releases/latest/download/install.sh | sh
+
+# 重新打开终端
+yuforge
+```
+
+**从源码安装**：
+
+```powershell
+git clone https://github.com/gxySkywalker/YuForge.git
+cd YuForge
+mvn clean package
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+### 2. 配置 API Key
+
+前置条件只有两个：**Java 17+** 和 **至少一个模型 API Key**。不需要同时配置所有 provider；例如只使用 DeepSeek 时，只配置 `DEEPSEEK_API_KEY` 即可。
+
+推荐按作用域二选一：
+
+| 方式 | 适用场景 | 位置 |
+| --- | --- | --- |
+| 项目级 `.env` | 不同项目使用不同 Key；本地开发 | 当前项目根目录的 `.env` |
+| 用户环境变量 | 所有项目复用同一 Key；Release 安装用户 | 用户环境变量，重新打开终端后生效 |
+
+**项目级 `.env`（推荐）**：在你准备使用 YuForge 的项目根目录新建 `.env`，不要提交到 Git。
+
+```dotenv
+DEEPSEEK_API_KEY=your_api_key
+DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+Windows 设置为当前用户环境变量：
+
+```powershell
+[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY', 'your_api_key', 'User')
+[Environment]::SetEnvironmentVariable('DEEPSEEK_MODEL', 'deepseek-v4-flash', 'User')
+# 关闭并重新打开终端后生效
+```
+
+支持的环境变量包括 `GLM_API_KEY`、`DEEPSEEK_API_KEY`、`STEP_API_KEY`、`KIMI_API_KEY`、`FREELLMAPI_API_KEY`、`XFYUN_MAAS_API_KEY` 和 `AGNES_API_KEY`。YuForge 的优先级为：`~/.yuforge/config.json` 中显式配置 → 系统/用户环境变量 → 当前项目 `.env` → 用户目录 `~/.env`。密钥不会显示在 `/doctor`、MCP 日志或终端输出中。
+
+### 3. 在项目目录中启动
+
+```powershell
+cd C:\code\your-project
+yuforge
+```
+
+首次进入一个工作区会展示信任确认页。确认后，再输入任务即可；输入 `/` 查看常用命令，Tab 可补全参数。
+
+```text
+> 分析当前项目的架构，并给出本地启动步骤
+> /init
+> 修复登录接口空指针，补充测试并验证
+> /mcp
+```
+
+## 安装与发布
+
+仓库通过 GitHub Actions 在推送 `v*` tag 时自动构建并发布：
+
+```text
+tag → Maven shaded jar → SHA-256 → Windows install.ps1 / Unix install.sh → GitHub Release
+```
+
+发布步骤：
+
+```bash
+mvn test -Pquick
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+发布完成后，Release 中的安装脚本已写入对应 jar 的不可变下载地址；用户无需安装 Maven，只需 Java 17+，安装后可以在任意项目目录运行 `yuforge`。
 
 ## 测试策略
 
@@ -27,20 +152,24 @@ mvn test -DskipTests=false
 
 ## 架构设计文档
 
+- [工程化优化与交付报告](docs/yuforge-engineering-delivery-report.md)：面向 GitHub 展示与技术面试的总览，覆盖上下文、记忆、安全、工具闭环、MCP、CLI 稳定性、验证证据及未交付边界。
+- [简历项目描述](docs/resume-yuforge-project.md)：可直接用于 AI Agent 岗和 Java 后端岗位的项目简介、技术栈、职责要点与面试展开话术。
 - [上下文与记忆工程设计说明](docs/context-memory-engineering.md)：Prompt Cache 约束、长上下文治理、工具结果归档恢复、会话 checkpoint、长期记忆检索与评测基线。
 - [Prompt Injection 防御与回归矩阵](docs/prompt-injection-defense.md)：直接/间接/记忆注入的防线、自动化用例和已知边界。
 - [取消与打断机制](docs/cancellation-and-interruption.md)：同步 SSE 请求取消链路、验证方式，以及事件队列打断的后续边界。
 
 安全边界说明：当前已交付 Prompt Injection 的提示词、来源、授权、审批和输出侧防线；容器/VM 沙箱、命令网络出口控制与通用 DLP 仍是后续增强，详见上面的防御文档。
 
-取消语义：inline CLI 的 `ESC`、TUI `/cancel` 与微信取消会中断后续 Agent/工具循环，并向 OpenAI-compatible provider 的同步 SSE HTTP 请求传播 `Call.cancel()`；网络层仍以 provider 对连接关闭的响应速度为准。
+取消语义：inline CLI 的 `ESC`、TUI `/cancel` 与微信取消会中断后续 Agent/工具循环，并向 OpenAI-compatible provider 的同步 SSE HTTP 请求传播 `Call.cancel()`；网络层仍以 provider 对连接关闭的响应速度为准。OpenAI-compatible SSE 正文使用 128 原始字符安全保留窗口后即持续显示，不再等待整段响应完成；该窗口用于在输出前阻断连续 system prompt 泄露片段。
+
+代码改动采用“证据优先”交付：Agent 写入或补丁后应运行项目匹配的构建、测试或诊断；配置/文档至少回读，启动服务须等待 ready 信号。ReAct 结束时会显示本轮 `✅ 验证` 或 `⚠️ 验证` 状态；后者表示改动尚未获得真实验证证据，不能当作已完成。
 
 ## 演进历程
 
 ### 第一期：ReAct Agent CLI
 
 - 单轮对话驱动的 `ReAct` 循环
-- 支持工具调用：读文件、写文件、列目录、文件 glob、代码 grep、执行命令、创建项目、RAG 语义辅助检索、联网搜索、MCP 动态工具
+- 支持工具调用：读文件、精确补丁、列目录、文件 glob、代码 grep、短命令与受控后台开发服务、创建项目、RAG 语义辅助检索、联网搜索、MCP 动态工具
 - 更适合简单任务或单步操作
 
 ### 第二期：Plan-and-Execute + DAG
@@ -84,7 +213,7 @@ mvn test -DskipTests=false
 
 ### 第六期：Human-in-the-Loop + 审批流
 
-- 危险操作静态规则识别：`write_file`、`execute_command`、`create_project`、`revert_turn`
+- 危险操作静态规则识别：`write_file`、`apply_patch`、`execute_command`、后台进程启动/停止、`create_project`、`revert_turn`
 - 三级危险等级：高危（`execute_command`）、中危（`write_file` / `create_project`）
 - 审批决策：批准 / 全部放行 / 拒绝 / 跳过 / 修改参数后执行
 - HITL 默认关闭，通过 `/hitl on` 启用
@@ -118,6 +247,7 @@ mvn test -DskipTests=false
 
 - 新增 `com.yuforge.mcp` 模块，支持 stdio 子进程 server 与 Streamable HTTP 远程 server
 - 启动时读取 `~/.yuforge/mcp.json` 与 `.yuforge/mcp.json`，项目级配置按 server 名覆盖用户级配置
+- Windows 上启动 stdio MCP 时会自动将 PATH 内的无扩展名 launcher（如 `npx`）解析为对应 `.cmd` 文件，避免 PowerShell 可运行但 Java `ProcessBuilder` 报 `CreateProcess error=2`
 - MCP `${VAR}` 支持系统环境变量、系统属性、项目 `.env`、用户 `~/.env`；检测到 `STEP_API_KEY` 时自动内置 `step_search` 远程 MCP，显式同名配置优先
 - MCP 工具自动注册为 `mcp__{server}__{tool}`，参数 schema 会清洗 `$ref` / `anyOf` / 超长 description，降低模型调用失败率
 - 所有 MCP 工具默认走 HITL 审批和审计，审计参数会脱敏 token / key / password / Authorization / Bearer 凭证
@@ -141,7 +271,8 @@ mvn test -DskipTests=false
 - 工具失败会返回稳定错误码、是否可重试、同签名尝试次数和针对性恢复建议；相同失败第二次要求换策略，第三次禁止原样重试
 - 复杂任务可维护会话内 TODO：清单作为下一轮 user turn 的外部工作记忆注入，底部状态栏展示完成摘要；不落盘、不进入长期记忆，`/clear` 会一并清理
 - 代码搜索结果统一使用 `/` 项目相对路径；`execute_command` 在 Windows 走 PowerShell、其他平台走 bash，并统一以 UTF-8 回收输出
-- inline 模式下 Token / cached input tokens / 估算成本 / 耗时进入底部状态栏，避免占用正文输出区
+- inline 默认使用稳定的 append-only `Thinking…` 与工具阶段反馈；Windows Terminal 下默认不启用底部保留状态栏，避免缩放/全屏/切标签后的旧帧残留
+- 默认 CLI 输出使用纯文本兼容标记；会剥离部分 Windows Terminal 字体可能显示为 `?` 的彩色 emoji，不影响工具执行或模型上下文
 - `/context` 会分类显示 system、工具 schema、conversation 的估算占用，以及治理阈值、prompt cache 和 resources 索引状态
 
 ### 第十三期：Chrome DevTools MCP
@@ -151,7 +282,7 @@ mvn test -DskipTests=false
 - 用于处理 SPA / JS 渲染 / 防爬墙 / 表单交互页面；微信公众号文章、知乎专栏、推特、小红书等 `web_fetch` 失败站点会引导走浏览器 MCP
 - HITL 的“全部放行”支持 MCP server 维度，连续浏览器操作可对 `chrome-devtools` 一次确认
 - `image` 类型结果会作为图片输入附加到下一轮；文本 fallback 仍保留，用于日志、人类可读摘要，以及 DeepSeek 等不接受图片块的 provider 自动降级上下文
-- MCP initialize 默认超时为 60 秒；CLI 首屏默认最多等待 8 秒，超时后先进入交互，未完成的 server 保持 `starting` 并在后台继续启动，可用 `/mcp` 和 `/mcp logs <name>` 追踪
+- MCP initialize 默认超时为 60 秒；CLI 首屏不会等待 MCP：Banner 和输入框先出现，server 随后在后台启动。首屏会显示已配置的 server 正在后台启动，而不是把预启动快照误显示为 `0/N · 0 tools`；未完成的 server 保持 `starting`，可用 `/mcp` 和 `/mcp logs <name>` 追踪；后台启动本身不向 transcript 刷进度日志
 
 ### 第十四期：CDP 会话复用 + 登录态访问
 
@@ -185,7 +316,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 
 | 形态 | 启用方式 | 视觉风格 |
 |---|---|---|
-| **inline 流式 TUI**（默认） | 直接运行 / `YUFORGE_RENDERER=inline` | Claude Code / Qoder 风格：YU 主题彩色开屏、主屏直出、transcript 当前位置的 `* ` 输入提示、JLine `Status` 托管的底部 dock（YOLO/HITL、MCP、Skill、model、ctx、token、cwd 等关键字段带克制彩色高亮；ctx 是当前上下文估算，in/out/cache 是调用统计）、右侧输入提示、行内可折叠工具块（`Read 3 files (ctrl+o to expand)`）、行内 git diff、HITL 单字符 `[y/n/a/s/m]` 提示 |
+| **inline 流式 TUI**（默认） | 直接运行 / `YUFORGE_RENDERER=inline` | Codex 风格普通滚屏：YU 主题彩色开屏、主屏直出、`> ` 输入提示、行内可折叠工具块（`Read 3 files (ctrl+o to expand)`）、行内 git diff、HITL 单字符 `[y/n/a/s/m]` 提示。默认不使用右提示或底部保留区，保证 Windows Terminal 缩放、全屏和标签恢复稳定 |
 | **lanterna 全屏 TUI** | `YUFORGE_RENDERER=lanterna`（或兼容旧 `YUFORGE_TUI=true`） | v16 三栏全屏：文件树 + 对话流 + 状态栏 + 底部输入栏，HITL 模态弹窗 |
 | **plain 兜底** | `YUFORGE_RENDERER=plain` | 纯 println，无折叠 / 状态栏，等价 v15 行为 |
 
@@ -194,7 +325,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 - 通用命令：`/clear`、`/context`、`/memory`、`/memory clear`、`/save <事实>`、`/export`、`/hitl`、`/hitl on`、`/hitl off`、`/config`、`/exit`
 - 对话历史保存到 `~/.yuforge/history/session_*.jsonl`
 - 兼容旧设置：`YUFORGE_TUI=true` 自动映射为 `YUFORGE_RENDERER=lanterna`（已 deprecated）
-- `YUFORGE_NO_STATUSBAR=true` 在 inline 模式下禁用 JLine 底部 dock（不适合 ANSI 光标控制的终端）
+- 仅在明确验证终端兼容性后，可用 `-Dyuforge.inline.bottom-dock=true` 或 `YUFORGE_INLINE_BOTTOM_DOCK=true` 开启实验性 JLine 底部状态栏
 - `NO_COLOR=1` 禁用所有 ANSI 颜色，保留布局
 
 ### 第十七期：LSP 诊断注入（MVP）
@@ -208,7 +339,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 
 ### 第十八期：Git Side-History 快照与回滚（MVP）
 
-- 每个 ReAct / Plan / Team turn 开始前创建 `pre-turn` 快照，结束后异步创建 `post-turn` 快照
+- 纯聊天与只读探索不扫描仓库；本轮第一次可能改动 workspace 的内置工具（以及 MCP 工具）执行前按需创建 `pre-turn` 快照，结束后异步创建 `post-turn` 快照
 - 快照仓库使用 JGit 纯 Java 实现，默认位于 `~/.yuforge/snapshots/<project_hash>/<worktree_hash>/.git`，不写用户项目 `.git`
 - `/snapshot` 查看最近快照，`/snapshot status` 查看配置与 side-git 目录，`/snapshot clean` 清理当前项目快照目录
 - `/restore <N>` 恢复到最近第 N 个 `pre-turn` 快照；恢复前会先创建 `pre-restore` 快照
@@ -266,6 +397,7 @@ v16.1 抽出 `Renderer` 接口 + 三个实现：
 
 `com.yuforge.policy` 包，作为 HITL 之外的辅助层（不是沙箱、不提供进程隔离）：
 
+- 工作区信任：首次进入未信任目录时，CLI 会在 YuForge 主界面之前单独询问是否信任；选择继续才会加载项目级配置、MCP 与主界面，选择退出不会打开该目录。信任后仅把该规范化绝对路径写入 `~/.yuforge/workspaces/trusted.txt`
 - `PathGuard` 路径围栏：文件类工具强制限定在项目根之内，拦截绝对路径外逃 / `..` 穿越 / 符号链接逃逸
 - `CommandGuard` 命令快速拒绝：HITL 之前的 fast-fail 黑名单（`sudo` / `rm -rf 全盘` / `mkfs` / `dd of=/dev` / fork bomb / `curl|sh` / `find /` / `chmod 777 /` / `shutdown`），减少 HITL 弹窗骚扰
 - `AuditLog` 结构化审计：危险工具调用按天写 JSONL 到 `~/.yuforge/audit/`，含 `outcome (allow|deny|error)` 与 `approver (hitl|policy|none)`；`revert_turn` 也纳入危险工具链
@@ -301,9 +433,38 @@ Tips for getting started:
 - 🔄 ReAct Agent 循环（思考-行动-观察）
 - 🛠️ 工具调用（文件操作、确定性代码搜索、Shell命令、项目创建、RAG 语义检索、联网搜索、MCP 动态工具）
 - 💬 交互式命令行界面
-- 📝 普通任务和斜杠命令提交后会先把本轮原始输入以 `>` 暗色整行块写回 transcript；输入态仍显示 `* `，单行提交只占一行，不额外追加空白行。普通任务随后再进入 Thinking / 工具调用，避免 dock 刷新或 activity 重绘后用户输入从可见历史里消失
+- 📝 输入态使用 `> `；提交后由 JLine 保留原始输入到 scrollback，YuForge 不再用相对光标擦除并回显它，避免 Windows Terminal 缩放、全屏和中文自动换行时误擦历史行。输入单独的 `/` 会显示 `/model`、`/plan`、`/team`、`/init` 等高频命令及说明；继续输入后按前缀筛选，Tab 可补全全部命令
 - 🧠 默认通过流式接口获取模型输出；inline ReAct 仅显示短暂的 Thinking 活动态和工具进度，不把 provider 原始 reasoning 写入 transcript，避免干扰最终回答。排障时可用 `-Dyuforge.render.show_reasoning=true` 或 `YUFORGE_RENDER_SHOW_REASONING=true` 显式开启；该开关不改变模型请求历史或日志。web_search / web_fetch 会在折叠头展示 query / URL，并在执行后输出一行结果摘要
+- 🧩 `/plan` 与 `/team` 的单步直连执行复用同一套折叠工具调用渲染；`/team` 的并行 Worker 先分别缓冲输出，再按步骤顺序展示，避免并发终端输出交错
 - 🖥️ 终端会对常见 Markdown（标题、列表、表格、代码块）做渲染后再显示；表格会按当前窗口宽度分配列宽，并在单元格内部换行，避免长 URL / 中文内容把列打散
+
+### 安装为 `yuforge` 命令
+
+需要 Java 17+。从源码构建后可安装到当前用户目录，无需管理员权限：
+
+```powershell
+mvn package
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1
+# 重新打开终端后
+yuforge
+```
+
+macOS / Linux：
+
+```bash
+mvn package
+sh scripts/install.sh
+yuforge
+```
+
+GitHub Release 安装时，将对应 jar 的 HTTPS 地址传给脚本：Windows 使用 `-JarUrl <url>`；macOS/Linux 使用 `YUFORGE_JAR_URL=<url> sh scripts/install.sh`。安装器只写当前用户的 YuForge 目录与用户级 PATH。
+
+项目推送 `v*` tag 后会由 GitHub Actions 自动构建 `yuforge-vX.Y.Z.jar` 并附加到 Release，同时生成 `.sha256` 校验文件。发布者可用下面的方式创建版本：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ### 第二期
 
@@ -368,7 +529,7 @@ Tips for getting started:
 - 📋 结构化审计：危险工具调用按天写一行 JSONL 到 `~/.yuforge/audit/`，可通过 `/audit [N]` 查看
 - 🧱 定位：HITL 之外的辅助层，不是沙箱、不提供进程隔离
 
-## 快速开始
+## 开发与高级配置
 
 ### 1. 配置 API Key
 
@@ -658,6 +819,9 @@ I
 - `glob_files` - 按文件名 glob 实时查找项目内文件（只读，自动跳过常见构建/依赖目录）
 - `grep_code` - 按关键字或正则实时搜索项目内代码，优先使用 ripgrep，返回文件、行号、可选上下文、partial 状态与 suggested_reads
 - `execute_command` - 在当前项目目录执行短时 Shell 命令（默认 60 秒超时，黑名单拦截破坏性命令）；不用于绕过受控读/搜工具
+- `start_background_process` - 启动 Spring Boot、Vite 等本会话托管开发服务，立即返回 `process_id`、PID 和日志路径；CLI 退出会自动停止
+- `list_background_processes` / `read_background_process_log` / `stop_background_process` - 查看状态、读取日志尾部、停止本会话托管服务
+- `inspect_background_process` / `wait_background_process_ready` - 从进程状态与日志诊断 `ready` / `starting` / `failed` / `exited`，尽力提取 localhost 地址；默认等待最多 30 秒，不主动进行网络探测
 - `create_project` - 创建项目结构（java/python/node）
 - `search_code` - 语义检索代码库（自然语言查询，适合作为模糊语义或常规搜索无果时的辅助）
 - `web_search` - 搜索互联网获取实时信息
@@ -665,6 +829,7 @@ I
 - `browser_connect` / `browser_disconnect` / `browser_status` - 按需管理本机 Chrome 登录态复用
 - `load_skill` - 加载已索引 Skill 的完整操作指引
 - `rewrite_todo_list` / `update_todo_status` - 维护复杂任务的会话内 TODO 工作记忆
+- `apply_patch` - 精确替换已有文本文件的唯一片段；修改已有文件默认优先使用，未命中或歧义匹配不会写入
 - `save_memory` - 在用户本轮明确要求保存稳定事实时写入长期记忆
 - `revert_turn` - 恢复到最近第 N 个 pre-turn 快照（走 HITL 与审计）
 - `read_tool_artifact` - 按 artifact_id 恢复被上下文治理归档的旧工具结果（只读、会话级）
@@ -673,17 +838,17 @@ I
 
 同一轮模型返回多个工具调用时，YuForge 会并行执行这些工具；如果工具之间有依赖关系，模型应分多轮调用。
 
-工具协作约束：代码探索遵循 `glob_files` → `grep_code` → `read_file`，已有文件修改遵循“定位 → 读取验证 → 写入 → 测试/构建/诊断/回读验证”。`execute_command` 只用于构建、测试、Git 状态和受控诊断，不得以 `grep` / `rg` / `find` / `cat` 绕过对应工具的路径围栏与结果预算；当前项目代码问题不应优先联网，`search_code` 仅用于语义模糊或常规搜索无果的辅助检索。
+工具协作约束：代码探索遵循 `glob_files` → `grep_code` → `read_file`，已有文件修改遵循“定位 → 读取验证 → `apply_patch` 精确修改 → 测试/构建/诊断/回读验证”。`apply_patch` 默认要求 `old_string` 在当前文件中唯一命中；新建文件或明确需要整文件重写时才使用 `write_file`。`execute_command` 只用于构建、测试、Git 状态和受控诊断，不得以 `grep` / `rg` / `find` / `cat` 绕过对应工具的路径围栏与结果预算；长期开发服务必须用 `start_background_process`，随后优先用 `wait_background_process_ready` 根据日志识别服务就绪、端口占用或构建失败，必要时用 `read_background_process_log` 深入诊断、用 `stop_background_process` 停止，禁止用 `&` / `Start-Process` / `nohup` 脱离托管。服务日志在 `.yuforge/processes/`，只在本次 CLI 会话保留管理权，退出 CLI 会自动停止。当前项目代码问题不应优先联网，`search_code` 仅用于语义模糊或常规搜索无果的辅助检索。
 
-工具卡片折叠展示调用对象；执行结束后 ReAct、Plan 与 Multi-Agent Worker 都会额外显示一行脱敏终态摘要（完成、失败、超时或取消及耗时）。原始工具输出只进入 Agent 上下文和调试日志，避免终端被大结果或敏感错误正文淹没。
+工具卡片折叠展示调用对象，并以“探索 / 修改 / 验证 / 运行”标记开发阶段；执行结束后 ReAct、Plan 与 Multi-Agent Worker 都会额外显示一行脱敏终态摘要（完成、失败、超时或取消及耗时）。失败时只附稳定、无敏感原文的短恢复建议；原始工具输出只进入 Agent 上下文和调试日志，避免终端被大结果或敏感错误正文淹没。默认 inline 采用 append-only transcript：Thinking、工具详情和正文按事件到达顺序追加，Ctrl+O 仅在末尾展开最近块，不通过光标回退重绘旧历史，因此 Windows Terminal 缩放、全屏和标签切换不会造成历史行被覆盖或乱序。
 
-inline 底部状态栏按终端宽度分级：宽屏显示 MCP/Skill、模型、phase、ctx、调用量、缓存、成本、耗时与 cwd；中等宽度优先保留模型、phase、ctx 与耗时；窄屏只保留模式、模型、phase 和 ctx 百分比。布局使用终端列宽而不是 Java 字符串长度，避免中文路径或宽字符错位。
+实验性 inline 底部状态栏为无边框单行：空闲时显示 `model · cwd`，活动期显示 `Thinking <elapsed> · model · cwd`；宽度不足时优先保留模型。Windows Terminal 的缩放、全屏和标签恢复仍可能造成第三方终端对保留区的重排，因此默认关闭。
 
 流式代码块在生成时显示稳定的 `generating code` 提示，完成后追加可用 `Ctrl+O` 展开的折叠块；不会再用 ANSI 光标回退覆盖已输出 transcript，避免长代码、宽字符换行或异步消息污染终端 scrollback。
 
 ESC 语义按界面状态明确区分：输入期右提示显示 `Esc clear`，只清空当前编辑缓冲；Agent 运行期活动面板显示 `Esc cancel`，触发取消 token 并阻止后续 Agent 循环。已开始的网络 I/O 或工具执行会尽力中断，具体退出速度仍取决于 provider 与进程。
 
-文件类与代码检索工具（`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `create_project`）路径强制限定在项目根之内，越界请求会被策略层拒绝；`execute_command` 通过命令黑名单拦截 `sudo` / `rm -rf 全盘` / `mkfs` / `dd of=/dev` / fork bomb / `curl|sh` 等。`revert_turn` 会批量回写工作区，默认触发 HITL 和审计。所有 `mcp__` 前缀工具默认触发 HITL 和审计。详见 `/policy`。
+文件类与代码检索工具（`read_file` / `write_file` / `list_dir` / `glob_files` / `grep_code` / `create_project`）路径强制限定在项目根之内，越界请求会被策略层拒绝。首次启动未信任目录时，YuForge 会先展示独立的信任页；用户选择继续才加载该工作区，选择退出则不进入主界面。`execute_command` 通过命令黑名单拦截 `sudo` / `rm -rf 全盘` / `mkfs` / `dd of=/dev` / fork bomb / `curl|sh` 等。`revert_turn` 会批量回写工作区，默认触发 HITL 和审计。所有 `mcp__` 前缀工具默认触发 HITL 和审计。详见 `/policy`。
 
 ## 命令
 
@@ -716,6 +881,7 @@ ESC 语义按界面状态明确区分：输入期右提示显示 `Esc clear`，�
 - `/mcp resources <name>` - 查看 MCP server 暴露的 resources
 - `/mcp prompts <name>` - 查看 MCP server 暴露的 prompts（只查看，不注入对话）
 - `/policy` - 查看安全策略状态（路径围栏 / 命令黑名单 / 资源上限 / 审计目录）
+- `/doctor` - 只读检查工作区、Java、Git、ripgrep、按项目类型需要的 Maven 或 Node/npm、当前模型 API Key 配置和 MCP 就绪摘要；不会验证 API 连通性、安装依赖或运行项目
 - `/audit [N]` - 查看今日最近 N 条危险工具审计记录（默认 10）
 - `/snapshot` - 查看最近 Side-Git 快照
 - `/snapshot status` - 查看 Side-Git 快照状态
