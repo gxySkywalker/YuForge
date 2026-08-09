@@ -3,15 +3,15 @@
 set -eu
 
 jar_path="${1:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/target/yuforge-1.0-SNAPSHOT.jar}"
-jar_url="${YUFORGE_JAR_URL:-__YUFORGE_RELEASE_JAR_URL__}"
+jar_url="${YUFORGE_JAR_URL:-}"
 install_root="${XDG_DATA_HOME:-$HOME/.local/share}/yuforge"
 bin_dir="$HOME/.local/bin"
 target_jar="$install_root/yuforge.jar"
 launcher="$bin_dir/yuforge"
 
-# Source-tree installer keeps this placeholder and installs a local Maven jar by default.
-# The release workflow replaces it with the immutable release asset URL.
-[ "$jar_url" = '__YUFORGE_RELEASE_JAR_URL__' ] && jar_url=""
+# __YUFORGE_RELEASE_JAR_URL__
+# Source-tree installer leaves the line above as a comment and installs a local Maven jar.
+# The release workflow replaces that comment with an immutable release asset URL.
 
 command -v java >/dev/null 2>&1 || { echo 'Java 17+ is required.' >&2; exit 1; }
 mkdir -p "$install_root" "$bin_dir"

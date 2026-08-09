@@ -33,8 +33,8 @@ jobs:
           cp target/yuforge-1.0-SNAPSHOT.jar "release/yuforge-${tag}.jar"
           sha256sum "release/yuforge-${tag}.jar" > "release/yuforge-${tag}.jar.sha256"
           jar_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/yuforge-${tag}.jar"
-          sed "s|__YUFORGE_RELEASE_JAR_URL__|${jar_url}|g" scripts/install.ps1 > release/install.ps1
-          sed "s|__YUFORGE_RELEASE_JAR_URL__|${jar_url}|g" scripts/install.sh > release/install.sh
+          sed "s|# __YUFORGE_RELEASE_JAR_URL__|\$JarUrl = '${jar_url}'|" scripts/install.ps1 > release/install.ps1
+          sed "s|# __YUFORGE_RELEASE_JAR_URL__|jar_url='${jar_url}'|" scripts/install.sh > release/install.sh
           chmod +x release/install.sh
 
       - name: Create or update GitHub Release

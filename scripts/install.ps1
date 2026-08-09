@@ -10,7 +10,7 @@ HTTPS URL of a YuForge Release jar. Takes precedence over JarPath.
 #>
 param(
     [string]$JarPath = (Join-Path $PSScriptRoot '..\target\yuforge-1.0-SNAPSHOT.jar'),
-    [string]$JarUrl = '__YUFORGE_RELEASE_JAR_URL__',
+    [string]$JarUrl,
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'YuForge'),
     [switch]$NoPathUpdate
 )
@@ -21,11 +21,9 @@ $binDir = Join-Path $installRoot 'bin'
 $targetJar = Join-Path $installRoot 'yuforge.jar'
 $launcher = Join-Path $binDir 'yuforge.cmd'
 
-# Source-tree installer keeps this placeholder and installs a local Maven jar by default.
-# The release workflow replaces it with the immutable release asset URL.
-if ($JarUrl -eq '__YUFORGE_RELEASE_JAR_URL__') {
-    $JarUrl = ''
-}
+# __YUFORGE_RELEASE_JAR_URL__
+# Source-tree installer leaves the line above as a comment and installs a local Maven jar.
+# The release workflow replaces that comment with an immutable release asset URL.
 
 if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
     throw 'Java 17+ is required. Install a JDK/JRE first, then run this installer again.'
