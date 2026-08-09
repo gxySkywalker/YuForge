@@ -145,37 +145,37 @@ Windows 上 YuForge 会解析 `npx` 到 `npx.cmd`，避免 PowerShell 可以调�
 
 ```mermaid
 flowchart TB
-    subgraph Ingress[交互与入口层]
-        CLI[CLI：工作区信任、命令补全、@path / MCP resource、斜杠命令]
-        RuntimeContext[Runtime Context：时间、工作目录、Shell、相关记忆]
+    subgraph Ingress["交互与入口层"]
+        CLI["CLI：工作区信任、命令补全、@path / MCP resource、斜杠命令"]
+        RuntimeContext["Runtime Context：时间、工作目录、Shell、相关记忆"]
     end
 
-    subgraph Execution[Agent 执行层]
-        React[ReAct：默认]
-        Plan[Plan-and-Execute：/plan]
-        Team[Multi-Agent：/team]
+    subgraph Execution["Agent 执行层"]
+        React["ReAct：默认"]
+        Plan["Plan-and-Execute：/plan"]
+        Team["Multi-Agent：/team"]
     end
 
-    subgraph Runtime[共享运行时层]
-        Prompt[PromptAssembler / LlmClient / CancellationToken]
-        Gateway[ToolRegistry]
-        Policy[HITL / PathGuard / CommandGuard]
-        Scheduler[并行调度、重试约束、变更验证证据]
+    subgraph Runtime["共享运行时层"]
+        Prompt["PromptAssembler / LlmClient / CancellationToken"]
+        Gateway["ToolRegistry"]
+        Policy["HITL / PathGuard / CommandGuard"]
+        Scheduler["并行调度、重试约束、变更验证证据"]
     end
 
-    subgraph State[状态与可恢复性]
-        Memory[Memory / Context Compaction / Artifact Store / Checkpoint]
-        Snapshot[Side-Git Snapshot / revert]
+    subgraph State["状态与可恢复性"]
+        Memory["Memory / Context Compaction / Artifact Store / Checkpoint"]
+        Snapshot["Side-Git Snapshot / revert"]
     end
 
-    subgraph Tools[工具与外部能力]
-        Local[本地文件、代码搜索、命令、后台进程]
-        External[Web / MCP / Browser]
+    subgraph Tools["工具与外部能力"]
+        Local["本地文件、代码搜索、命令、后台进程"]
+        External["Web / MCP / Browser"]
     end
 
-    subgraph Output[呈现与审计层]
-        Renderer[Inline / Plain Renderer：append-only transcript]
-        Audit[Audit Log / Debug Log / Session Export]
+    subgraph Output["呈现与审计层"]
+        Renderer["Inline / Plain Renderer：append-only transcript"]
+        Audit["Audit Log / Debug Log / Session Export"]
     end
 
     CLI --> React
