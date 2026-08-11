@@ -5,18 +5,19 @@ import com.yuforge.hitl.ApprovalPolicy;
 import com.yuforge.hitl.ApprovalRequest;
 import com.yuforge.hitl.ApprovalResult;
 import com.yuforge.util.AnsiStyle;
-import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Inline 形态的 HITL 审批提示。
  *
- * <p>主菜单选项 {@code y / a / n / s / m} 通过 raw mode 单字符读取（不需要回车），
- * 后续输入（拒绝原因、新参数 JSON）回退到 {@code BufferedReader.readLine}。
+ * <p>主菜单使用方向键移动、Enter 确认、Esc 拒绝；拒绝原因和参数修改继续从
+ * 同一个 JLine terminal reader 读取，避免输入缓冲器争用。
  *
  * <p>有意保持和 {@link com.yuforge.render.PlainRenderer#promptApproval} 一致的语义；
  * 只是首选项交互更紧凑。
@@ -24,8 +25,6 @@ import java.io.PrintStream;
 public final class InlineApprovalPrompter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final int MAX_ATTEMPTS = 5;
-
     private final PrintStream out;
     private final Terminal terminal;
     private final BufferedReader testLineReader;
@@ -49,71 +48,57 @@ public final class InlineApprovalPrompter {
         }
         out.println(request.toDisplayText());
 
-        for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            String optionsLine = sensitive
-                    ? AnsiStyle.subtle("[y] approve  [n] reject  [s] skip  [m] modify")
-                    : AnsiStyle.subtle("[y] approve  [a] all  [n] reject  [s] skip  [m] modify");
-            out.print("> " + optionsLine + " ");
-            out.flush();
-
-            int key = readSingleKey();
-            if (key < 0) {
-                out.println();
-                return ApprovalResult.reject("无法读取按键");
+        List<ApprovalChoice> choices = choicesFor(request, sensitive);
+        while (true) {
+            int selected = new SlashPalette(out, terminal).open(
+                    "选择如何处理", choices.stream().map(ApprovalChoice::label).toList(), false);
+            if (selected < 0) {
+                return ApprovalResult.reject("用户取消审批");
             }
-            char ch = Character.toLowerCase((char) key);
-            // echo + newline so后续输出不和提示行挤在一起
-            out.println(ch);
-            out.flush();
-
-            switch (ch) {
-                case 'y', '\n', '\r' -> {
-                    return ApprovalResult.approve();
-                }
-                case 'a' -> {
-                    if (sensitive) {
-                        out.println(AnsiStyle.subtle("  敏感操作不支持全部放行，请选 y/n/s/m"));
-                        continue;
-                    }
-                    return promptApproveAllScope(request);
-                }
-                case 'n' -> {
-                    return ApprovalResult.reject(promptForReason());
-                }
-                case 's' -> {
-                    return ApprovalResult.skip();
-                }
-                case 'm' -> {
-                    ApprovalResult modified = promptForModifiedArgs(request);
-                    if (modified != null) {
-                        return modified;
-                    }
-                }
-                default -> out.println(AnsiStyle.subtle("  ❓ 未识别按键 '" + ch + "'，重新选择"));
+            ApprovalChoice choice = choices.get(selected);
+            ApprovalResult result = switch (choice.action()) {
+                case APPROVE_ONCE -> ApprovalResult.approve();
+                case APPROVE_SESSION -> approveSession(request);
+                case REJECT_WITH_REASON -> ApprovalResult.reject(promptForReason());
+                case SKIP -> ApprovalResult.skip();
+                case MODIFY -> promptForModifiedArgs(request);
+            };
+            if (result != null) {
+                return result;
             }
         }
-        out.println(AnsiStyle.subtle("  连续多次无效输入，保守处理为拒绝"));
-        return ApprovalResult.reject("连续多次无效输入");
     }
 
-    private int readSingleKey() {
-        Attributes original;
-        try {
-            original = terminal.enterRawMode();
-        } catch (Exception e) {
-            return -1;
-        }
-        try {
-            terminal.flush();
-            return terminal.reader().read();
-        } catch (Exception e) {
-            return -1;
-        } finally {
-            try {
-                terminal.setAttributes(original);
-            } catch (Exception ignored) {
+    private List<ApprovalChoice> choicesFor(ApprovalRequest request, boolean sensitive) {
+        List<ApprovalChoice> choices = new ArrayList<>();
+        choices.add(new ApprovalChoice("允许本次操作", ApprovalAction.APPROVE_ONCE));
+        if (!sensitive) {
+            String scope = ApprovalPolicy.approvalScopeKey(request.toolName());
+            String label;
+            if ("workspace_edit".equals(scope)) {
+                label = "允许本会话内的项目文件修改";
+            } else if (ApprovalPolicy.isMcpTool(request.toolName())) {
+                label = "允许本会话内此 MCP server 的操作";
+            } else {
+                label = "允许本会话内后续同类操作";
             }
+            choices.add(new ApprovalChoice(label, ApprovalAction.APPROVE_SESSION));
         }
+        choices.add(new ApprovalChoice("拒绝并告诉 YuForge 原因", ApprovalAction.REJECT_WITH_REASON));
+        choices.add(new ApprovalChoice("跳过此操作", ApprovalAction.SKIP));
+        choices.add(new ApprovalChoice("修改工具参数后执行", ApprovalAction.MODIFY));
+        return choices;
+    }
+
+    private ApprovalResult approveSession(ApprovalRequest request) {
+        if (ApprovalPolicy.isMcpTool(request.toolName())) {
+            out.println(AnsiStyle.subtle("  已允许本会话内此 MCP server 的后续操作"));
+            return ApprovalResult.approveAllByServer();
+        }
+        String scope = ApprovalPolicy.approvalScopeKey(request.toolName());
+        String label = "workspace_edit".equals(scope) ? "项目文件修改" : request.toolName();
+        out.println(AnsiStyle.subtle("  已允许本会话内后续" + label));
+        return ApprovalResult.approveAll();
     }
 
     private String promptForReason() {
@@ -121,28 +106,6 @@ public final class InlineApprovalPrompter {
         out.flush();
         String line = readTextLine();
         return line == null ? "" : line.trim();
-    }
-
-    private ApprovalResult promptApproveAllScope(ApprovalRequest request) {
-        String mcpServer = ApprovalPolicy.mcpServerName(request.toolName());
-        if (mcpServer == null || mcpServer.isBlank()) {
-            String scope = ApprovalPolicy.approvalScopeKey(request.toolName());
-            String label = "workspace_edit".equals(scope) ? "本会话项目文件修改" : request.toolName();
-            out.println(AnsiStyle.subtle("  已批准，后续" + label + "自动通过"));
-            return ApprovalResult.approveAll();
-        }
-        out.println("  全部放行范围 [tool/Enter] 仅本工具  [server] 整个 MCP server " + mcpServer);
-        out.print("> ");
-        out.flush();
-        String scope;
-        scope = readTextLine();
-        String n = scope == null ? "" : scope.trim().toLowerCase();
-        if ("server".equals(n) || "s".equals(n)) {
-            out.println(AnsiStyle.subtle("  已批准 server 范围"));
-            return ApprovalResult.approveAllByServer();
-        }
-        out.println(AnsiStyle.subtle("  已批准 tool 范围"));
-        return ApprovalResult.approveAll();
     }
 
     private ApprovalResult promptForModifiedArgs(ApprovalRequest request) {
@@ -204,5 +167,16 @@ public final class InlineApprovalPrompter {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    private enum ApprovalAction {
+        APPROVE_ONCE,
+        APPROVE_SESSION,
+        REJECT_WITH_REASON,
+        SKIP,
+        MODIFY
+    }
+
+    private record ApprovalChoice(String label, ApprovalAction action) {
     }
 }

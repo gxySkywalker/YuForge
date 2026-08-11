@@ -32,6 +32,11 @@ public final class SlashPalette {
      * @return 选中项的下标；用户取消（Esc）返回 -1
      */
     public int open(String title, List<String> items) {
+        return open(title, items, true);
+    }
+
+    /** 打开 palette；审批等场景可隐藏数字快捷键，避免用户误以为必须输入编号。 */
+    public int open(String title, List<String> items, boolean numberShortcuts) {
         if (items == null || items.isEmpty()) {
             return -1;
         }
@@ -39,12 +44,12 @@ public final class SlashPalette {
         int rendered = 0;
         try {
             while (true) {
-                rendered = render(title, items, selected);
+                rendered = render(title, items, selected, numberShortcuts);
                 int key = readKey();
                 // 清掉本次渲染
                 erase(rendered);
                 rendered = 0;
-                int decision = handleKey(key, selected, items.size());
+                int decision = handleKey(key, selected, items.size(), numberShortcuts);
                 if (decision == DECISION_CANCEL) {
                     return -1;
                 }
@@ -65,12 +70,12 @@ public final class SlashPalette {
         }
     }
 
-    private int render(String title, List<String> items, int selected) {
+    private int render(String title, List<String> items, int selected, boolean numberShortcuts) {
         out.println();
         out.println(AnsiStyle.heading("┌─ " + (title == null ? "选择" : title) + " ─"));
         for (int i = 0; i < items.size(); i++) {
             String prefix = (i == selected) ? "▶ " : "  ";
-            String numberHint = i < 9 ? "[" + (i + 1) + "] " : "    ";
+            String numberHint = numberShortcuts && i < 9 ? "[" + (i + 1) + "] " : "";
             String line = "│ " + prefix + numberHint + items.get(i);
             if (i == selected) {
                 out.println(AnsiStyle.emphasis(line));
@@ -78,7 +83,10 @@ public final class SlashPalette {
                 out.println(line);
             }
         }
-        out.println(AnsiStyle.subtle("└─ ↑↓ 切换  Enter 确认  Esc 取消  数字键直选"));
+        String hint = numberShortcuts
+                ? "└─ ↑↓ 切换  Enter 确认  Esc 取消  数字键直选"
+                : "└─ ↑↓ 移动  Enter 确认  Esc 拒绝";
+        out.println(AnsiStyle.subtle(hint));
         out.flush();
         return items.size() + 3;
     }
@@ -139,6 +147,10 @@ public final class SlashPalette {
     private static final int DECISION_NONE = -5;
 
     static int handleKey(int key, int selected, int itemCount) {
+        return handleKey(key, selected, itemCount, true);
+    }
+
+    static int handleKey(int key, int selected, int itemCount, boolean numberShortcuts) {
         if (key == KEY_UP) {
             return DECISION_UP;
         }
@@ -151,7 +163,7 @@ public final class SlashPalette {
         if (key == '\r' || key == '\n') {
             return DECISION_CONFIRM;
         }
-        if (key >= '1' && key <= '9') {
+        if (numberShortcuts && key >= '1' && key <= '9') {
             int idx = key - '1';
             if (idx < itemCount) {
                 return idx;

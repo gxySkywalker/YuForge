@@ -33,6 +33,13 @@ class SlashPaletteTest {
     }
 
     @Test
+    void numberKeyIsIgnoredWhenShortcutsAreDisabled() {
+        int decision = SlashPalette.handleKey('1', 0, 3, false);
+        assertTrue(decision < 0);
+        assertTrue(decision != -2, "数字键不能在审批菜单里直接确认");
+    }
+
+    @Test
     void upArrowMovesSelection() {
         int decision = SlashPalette.handleKey(-3, 0, 5);
         assertEquals(-3, decision);  // DECISION_UP

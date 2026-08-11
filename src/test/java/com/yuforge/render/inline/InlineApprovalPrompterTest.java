@@ -20,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InlineApprovalPrompterTest {
 
     @Test
-    void singleCharYReturnsApprove() throws Exception {
-        Terminal terminal = mockTerminalReturning('y');
+    void enterApprovesCurrentOperation() throws Exception {
+        Terminal terminal = mockTerminalReturning('\r');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         InlineApprovalPrompter p = new InlineApprovalPrompter(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
@@ -32,8 +32,8 @@ class InlineApprovalPrompterTest {
     }
 
     @Test
-    void singleCharSReturnsSkip() throws Exception {
-        Terminal terminal = mockTerminalReturning('s');
+    void movingDownToSkipReturnsSkipped() throws Exception {
+        Terminal terminal = mockTerminalReturning('j', 'j', 'j', '\r');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         InlineApprovalPrompter p = new InlineApprovalPrompter(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
@@ -44,8 +44,8 @@ class InlineApprovalPrompterTest {
     }
 
     @Test
-    void singleCharNFollowedByReasonReturnsRejected() throws Exception {
-        Terminal terminal = mockTerminalReturning('n');
+    void movingToRejectThenEnteringReasonReturnsRejected() throws Exception {
+        Terminal terminal = mockTerminalReturning('j', 'j', '\r');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         InlineApprovalPrompter p = new InlineApprovalPrompter(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
@@ -62,7 +62,7 @@ class InlineApprovalPrompterTest {
         Mockito.when(terminal.enterRawMode()).thenReturn(null);
         NonBlockingReader reader = Mockito.mock(NonBlockingReader.class);
         Mockito.when(reader.read()).thenReturn(
-                (int) 'n',
+                (int) 'j', (int) 'j', (int) '\r',
                 (int) 't', (int) 'o', (int) 'o', (int) ' ', (int) 'r', (int) 'i', (int) 's', (int) 'k', (int) 'y',
                 (int) '\n');
         Mockito.when(terminal.reader()).thenReturn(reader);
@@ -76,8 +76,8 @@ class InlineApprovalPrompterTest {
     }
 
     @Test
-    void singleCharAOnBuiltinToolApproveAll() throws Exception {
-        Terminal terminal = mockTerminalReturning('a');
+    void movingToSessionApprovalCoversWorkspaceEdits() throws Exception {
+        Terminal terminal = mockTerminalReturning('j', '\r');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         InlineApprovalPrompter p = new InlineApprovalPrompter(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
@@ -88,20 +88,20 @@ class InlineApprovalPrompterTest {
     }
 
     @Test
-    void singleCharAOnMcpToolApproveAllByServer() throws Exception {
-        Terminal terminal = mockTerminalReturning('a');
+    void movingToSessionApprovalCoversMcpServer() throws Exception {
+        Terminal terminal = mockTerminalReturning('j', '\r');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         InlineApprovalPrompter p = new InlineApprovalPrompter(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
                 terminal,
-                new BufferedReader(new StringReader("server\n")));
+                new BufferedReader(new StringReader("")));
         ApprovalResult result = p.prompt(ApprovalRequest.of("mcp__chrome-devtools__click", "{}", "test"));
         assertEquals(ApprovalResult.Decision.APPROVED_ALL_BY_SERVER, result.decision());
     }
 
     @Test
-    void singleCharMWithValidJsonReturnsModified() throws Exception {
-        Terminal terminal = mockTerminalReturning('m');
+    void movingToModifyWithValidJsonReturnsModified() throws Exception {
+        Terminal terminal = mockTerminalReturning('j', 'j', 'j', 'j', '\r');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         InlineApprovalPrompter p = new InlineApprovalPrompter(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
@@ -126,11 +126,32 @@ class InlineApprovalPrompterTest {
         assertEquals(ApprovalResult.Decision.REJECTED, result.decision());
     }
 
-    private static Terminal mockTerminalReturning(char ch) throws Exception {
+    @Test
+    void approvalMenuUsesDescriptiveChoicesWithoutNumberHints() throws Exception {
+        Terminal terminal = mockTerminalReturning('\r');
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineApprovalPrompter p = new InlineApprovalPrompter(
+                new PrintStream(sink, true, StandardCharsets.UTF_8), terminal,
+                new BufferedReader(new StringReader("")));
+
+        p.prompt(ApprovalRequest.of("apply_patch", "{}", "test"));
+
+        String rendered = sink.toString(StandardCharsets.UTF_8);
+        assertTrue(rendered.contains("允许本次操作"), rendered);
+        assertTrue(rendered.contains("允许本会话内的项目文件修改"), rendered);
+        assertTrue(rendered.contains("拒绝并告诉 YuForge 原因"), rendered);
+        assertTrue(!rendered.contains("[1]"), rendered);
+    }
+
+    private static Terminal mockTerminalReturning(char... keys) throws Exception {
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.enterRawMode()).thenReturn(null);
         NonBlockingReader reader = Mockito.mock(NonBlockingReader.class);
-        Mockito.when(reader.read()).thenReturn((int) ch);
+        Integer[] values = new Integer[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            values[i] = (int) keys[i];
+        }
+        Mockito.when(reader.read()).thenReturn(values[0], java.util.Arrays.copyOfRange(values, 1, values.length));
         Mockito.when(terminal.reader()).thenReturn(reader);
         return terminal;
     }

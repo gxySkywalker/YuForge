@@ -165,6 +165,7 @@ src/main/java/com/yuforge/
 - 拦截顺序：HitlToolRegistry → ToolRegistry → PathGuard/CommandGuard
 - 用户无法批准策略拒绝的请求
 - inline HITL 的单键选择与拒绝原因/参数修改必须复用同一个 JLine terminal reader，禁止再与 `System.in` 的独立缓冲器混读。用户拒绝或跳过工具调用后，ReAct / Plan task / SubAgent 必须终止当前任务，不能把拒绝当普通工具错误继续循环。
+- inline HITL 使用可见的方向键菜单：`↑/↓` 移动、`Enter` 确认、`Esc` 拒绝；选项必须直接说明“允许本次”“允许本会话范围”“拒绝并填写原因”等语义，不显示或依赖 `y/a/n`、数字编号。plain/非交互 renderer 保留文字输入降级路径。
 - 常规可信工作区中，`write_file` / `apply_patch` / `create_project` 共享会话级 `workspace_edit` 放行范围，减少连续编辑时的重复审批；`execute_command`、后台进程、回滚和 MCP 仍保持独立范围。不可信外部内容和敏感页面触发的逐次确认不可被该缓存绕过。
 - CLI 首次进入未知目录必须先询问工作区信任；未信任仅允许读取、搜索和分析，`write_file`、`apply_patch`、`execute_command`、`start_background_process`、`stop_background_process`、`create_project`、`revert_turn`、`save_memory` 与所有 `mcp__*` 工具必须在 ToolRegistry 执行层拒绝（先于 HITL），信任记录只保存规范化绝对路径到 `~/.yuforge/workspaces/trusted.txt`
 - PathGuard 强制路径限定在项目根内
