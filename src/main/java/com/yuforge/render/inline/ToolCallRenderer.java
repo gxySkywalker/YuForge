@@ -64,6 +64,21 @@ public final class ToolCallRenderer {
                 + totalCalls + " 次 (ctrl+o to expand)");
     }
 
+    static String withHeaderPrefix(String styledHeader, String prefix) {
+        String plain = AnsiStyle.strip(styledHeader);
+        if (plain.startsWith("> ")) {
+            plain = plain.substring(2);
+        }
+        return AnsiStyle.subtle("> " + prefix + plain);
+    }
+
+    static boolean isExplorationTool(String toolName) {
+        return switch (toolName) {
+            case "read_file", "list_dir", "glob_files", "grep_code", "search_code" -> true;
+            default -> false;
+        };
+    }
+
     static List<String> expandedLines(Map<String, List<LlmClient.ToolCall>> grouped) {
         List<String> lines = new ArrayList<>();
         for (var group : grouped.entrySet()) {

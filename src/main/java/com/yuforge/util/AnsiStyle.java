@@ -4,6 +4,8 @@ package com.yuforge.util;
  * 终端 ANSI 样式辅助。
  */
 public final class AnsiStyle {
+    private static final java.util.regex.Pattern ANSI_SEQUENCE =
+            java.util.regex.Pattern.compile("\\u001B\\[[;\\d]*m");
     private static final String RESET = "\u001B[0m";
     private static final String BOLD = "\u001B[1m";
     private static final String DIM = "\u001B[2m";
@@ -118,6 +120,10 @@ public final class AnsiStyle {
 
     public static boolean isEnabled() {
         return ENABLED;
+    }
+
+    public static String strip(String text) {
+        return text == null ? "" : ANSI_SEQUENCE.matcher(text).replaceAll("");
     }
 
     private static String wrap(String prefix, String text) {

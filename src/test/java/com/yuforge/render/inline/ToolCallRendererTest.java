@@ -15,6 +15,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ToolCallRendererTest {
 
     @Test
+    void classifiesOnlyReadOnlyCodeExplorationToolsAsThrottleable() {
+        assertTrue(ToolCallRenderer.isExplorationTool("read_file"));
+        assertTrue(ToolCallRenderer.isExplorationTool("grep_code"));
+        assertFalse(ToolCallRenderer.isExplorationTool("apply_patch"));
+        assertFalse(ToolCallRenderer.isExplorationTool("execute_command"));
+        assertFalse(ToolCallRenderer.isExplorationTool("mcp__browser__click"));
+    }
+
+    @Test
     void singleGroupCollapsedHeaderUsesToolLabel() {
         var grouped = ToolCallRenderer.group(List.of(
                 tc("read_file", "{\"path\":\"a.md\"}"),

@@ -50,6 +50,12 @@ public final class InlineRenderer implements Renderer {
     private int turnThinkingCycles;
     private volatile StatusInfo latestStatus;
     private volatile boolean turnHadActivity;
+    private int visibleExplorationBatches;
+    private int pendingExplorationBatches;
+    private final List<LlmClient.ToolCall> pendingExplorationCalls = new ArrayList<>();
+
+    private static final int IMMEDIATE_EXPLORATION_BATCHES = 2;
+    private static final int EXPLORATION_BATCH_MERGE_SIZE = 4;
 
     // —— 代码块折叠状态机字段（仅供 createTranscriptStream 内部使用）——
     private final StringBuilder lineBuffer = new StringBuilder();
@@ -94,6 +100,9 @@ public final class InlineRenderer implements Renderer {
         }
         turnThinkingElapsedMillis = 0L;
         turnThinkingCycles = 0;
+        visibleExplorationBatches = 0;
+        pendingExplorationBatches = 0;
+        pendingExplorationCalls.clear();
         blockRegistry.clear();
     }
 
@@ -110,6 +119,7 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void beforeInput() {
+        flushPendingExploration();
         emitTurnThinkingSummary();
         if (statusBar != null) {
             statusBar.prepareInputLine();
@@ -342,9 +352,47 @@ public final class InlineRenderer implements Renderer {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return;
         }
+        if (isExplorationOnly(toolCalls)) {
+            if (visibleExplorationBatches < IMMEDIATE_EXPLORATION_BATCHES) {
+                visibleExplorationBatches++;
+                renderToolBlock(toolCalls, null);
+                return;
+            }
+            pendingExplorationBatches++;
+            pendingExplorationCalls.addAll(toolCalls);
+            if (activityDisplay != null && !closed) {
+                activityDisplay.beginActivity("Exploring", pendingExplorationBatches + " batches queued");
+            }
+            if (pendingExplorationBatches >= EXPLORATION_BATCH_MERGE_SIZE) {
+                flushPendingExploration();
+            }
+            return;
+        }
+        flushPendingExploration();
+        renderToolBlock(toolCalls, null);
+    }
+
+    private void flushPendingExploration() {
+        if (pendingExplorationCalls.isEmpty()) {
+            return;
+        }
+        if (activityDisplay != null) {
+            activityDisplay.end();
+        }
+        String prefix = "探索 · 合并 " + pendingExplorationBatches + " 批 · ";
+        renderToolBlock(List.copyOf(pendingExplorationCalls), prefix);
+        pendingExplorationCalls.clear();
+        pendingExplorationBatches = 0;
+    }
+
+    private void renderToolBlock(List<LlmClient.ToolCall> toolCalls, String headerPrefix) {
         Map<String, List<LlmClient.ToolCall>> grouped = ToolCallRenderer.group(toolCalls);
+        String header = ToolCallRenderer.collapsedHeader(grouped);
+        if (headerPrefix != null) {
+            header = ToolCallRenderer.withHeaderPrefix(header, headerPrefix);
+        }
         FoldableBlock block = new FoldableBlock(out,
-                ToolCallRenderer.collapsedHeader(grouped),
+                header,
                 ToolCallRenderer.expandedLines(grouped));
         blockRegistry.register(block);
         TranscriptEntry entry = new BlockEntry(block);
@@ -353,6 +401,10 @@ public final class InlineRenderer implements Renderer {
             transcript.add(entry);
             emit(rendered);
         }
+    }
+
+    private static boolean isExplorationOnly(List<LlmClient.ToolCall> toolCalls) {
+        return toolCalls.stream().allMatch(call -> ToolCallRenderer.isExplorationTool(call.function().name()));
     }
 
     @Override

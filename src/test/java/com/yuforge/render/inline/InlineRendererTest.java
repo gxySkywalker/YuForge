@@ -5,6 +5,7 @@ import com.yuforge.hitl.ApprovalResult;
 import com.yuforge.llm.LlmClient;
 import com.yuforge.render.StatusInfo;
 import com.yuforge.render.ReasoningDisplayPolicy;
+import com.yuforge.util.AnsiStyle;
 import org.jline.reader.LineReader;
 import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
@@ -460,6 +461,55 @@ class InlineRendererTest {
             assertTrue(emitted.contains("details"), emitted);
             assertFalse(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
             assertFalse(emitted.contains(AnsiSeq.moveUp(1)), emitted);
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
+    void repeatedExplorationBatchesAreMergedButMutatingToolsRemainImmediate() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("dumb");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.beginTurn();
+            for (int i = 0; i < 6; i++) {
+                renderer.appendToolCalls(List.of(tc("read_file", "{\"path\":\"file" + i + ".java\"}")));
+            }
+
+            String exploration = AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8));
+            assertEquals(3, occurrences(exploration, "ctrl+o to expand"), exploration);
+            assertTrue(exploration.contains("探索 · 合并 4 批"), exploration);
+
+            renderer.appendToolCalls(List.of(tc("apply_patch", "{\"path\":\"Main.java\"}")));
+            String withMutation = AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8));
+            assertTrue(withMutation.contains("修改"), withMutation);
+            assertTrue(withMutation.contains("Main.java"), withMutation);
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
+    void pendingExplorationSummaryFlushesBeforeReturningToInput() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("dumb");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.beginTurn();
+            renderer.appendToolCalls(List.of(tc("read_file", "{\"path\":\"a.java\"}")));
+            renderer.appendToolCalls(List.of(tc("read_file", "{\"path\":\"b.java\"}")));
+            renderer.appendToolCalls(List.of(tc("read_file", "{\"path\":\"c.java\"}")));
+
+            assertFalse(AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8)).contains("合并 1 批"));
+            renderer.beforeInput();
+            assertTrue(AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8)).contains("探索 · 合并 1 批"));
         } finally {
             renderer.close();
         }
