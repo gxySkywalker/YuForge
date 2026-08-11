@@ -355,7 +355,7 @@ class InlineRendererTest {
     }
 
     @Test
-    void activityPanelIsDisabledForAppendOnlyInlineTranscript() {
+    void activityPanelUsesSingleLineWithoutRewritingTranscript() {
         String previous = System.getProperty("yuforge.inline.bottom-dock");
         System.setProperty("yuforge.inline.bottom-dock", "true");
         Terminal terminal = Mockito.mock(Terminal.class);
@@ -375,8 +375,10 @@ class InlineRendererTest {
             renderer.beginActivity("Compacting conversation", "正在整理早期对话并生成摘要");
 
             String rendered = sink.toString(StandardCharsets.UTF_8);
-            assertFalse(renderer.supportsActivityPanel());
-            assertEquals("", rendered);
+            assertTrue(renderer.supportsActivityPanel());
+            assertTrue(rendered.contains("Compacting conversation"), rendered);
+            assertFalse(rendered.contains("正在整理早期对话"), rendered);
+            assertFalse(rendered.contains(AnsiSeq.moveUp(1)), rendered);
         } finally {
             renderer.endActivity();
             renderer.close();

@@ -24,16 +24,12 @@ import java.util.concurrent.TimeUnit;
  */
 final class InlineActivityDisplay implements AutoCloseable {
 
-    private static final int MAX_REASONING_CHARS = 4096;
-    private static final int MAX_REASONING_ROWS = 4;
     private static final String[] SPINNER_FRAMES = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
     private static final AttributedStyle STATUS_STYLE = AttributedStyle.DEFAULT.italic();
-    private static final AttributedStyle QUOTE_STYLE = AttributedStyle.DEFAULT.faint().italic();
 
     private final Terminal terminal;
     private final PrintStream renderLock;
     private final ScheduledExecutorService scheduler;
-    private final StringBuilder reasoning = new StringBuilder();
     private ScheduledFuture<?> tickTask;
     private boolean active;
     private boolean closed;
@@ -62,7 +58,7 @@ final class InlineActivityDisplay implements AutoCloseable {
         return active && !closed;
     }
 
-    /** 当 renderer 状态变化时，如果 thinking 正在显示，则刷新 spinner 和 reasoning 预览。 */
+    /** 当 renderer 状态变化时，如果 thinking 正在显示，则刷新 spinner 和计时。 */
     synchronized void refreshIfActive() {
         if (active && !closed) {
             renderLocked();
@@ -74,7 +70,6 @@ final class InlineActivityDisplay implements AutoCloseable {
             return;
         }
         clearLocked();
-        reasoning.setLength(0);
         this.label = (label == null || label.isBlank()) ? "Thinking" : label.trim();
         this.showCancelHint = true;
         this.startedNanos = System.nanoTime();
@@ -89,35 +84,18 @@ final class InlineActivityDisplay implements AutoCloseable {
             return;
         }
         clearLocked();
-        reasoning.setLength(0);
         this.label = (label == null || label.isBlank()) ? "Working" : label.trim();
         this.showCancelHint = false;
         this.startedNanos = System.nanoTime();
         this.frame = 0;
         this.active = true;
-        if (detail != null && !detail.isBlank()) {
-            reasoning.append(detail);
-            trimReasoning();
-        }
         renderLocked();
         restartTickLocked();
     }
 
     synchronized void appendThinking(String delta) {
-        if (closed || delta == null || delta.isEmpty()) {
-            return;
-        }
-        if (!active) {
-            this.label = "Thinking";
-            this.showCancelHint = true;
-            this.startedNanos = System.nanoTime();
-            this.frame = 0;
-            this.active = true;
-            restartTickLocked();
-        }
-        reasoning.append(delta);
-        trimReasoning();
-        renderLocked();
+        // 默认不在瞬态区域展示原始 reasoning。保持固定单行是 resize 安全边界；
+        // reasoning 仍按 provider 协议保留在历史/日志中。
     }
 
     synchronized void end() {
@@ -126,7 +104,6 @@ final class InlineActivityDisplay implements AutoCloseable {
         }
         active = false;
         cancelTickLocked();
-        reasoning.setLength(0);
         clearLocked();
     }
 
@@ -138,7 +115,6 @@ final class InlineActivityDisplay implements AutoCloseable {
         closed = true;
         active = false;
         cancelTickLocked();
-        reasoning.setLength(0);
         clearLocked();
         scheduler.shutdownNow();
     }
@@ -207,20 +183,8 @@ final class InlineActivityDisplay implements AutoCloseable {
         if (renderedRows <= 0) {
             return;
         }
-        if (renderedRows > 1) {
-            writer.print(AnsiSeq.moveUp(renderedRows - 1));
-        }
         writer.print('\r');
-        for (int i = 0; i < renderedRows; i++) {
-            writer.print(AnsiSeq.CLEAR_LINE);
-            if (i < renderedRows - 1) {
-                writer.print('\n');
-            }
-        }
-        if (renderedRows > 1) {
-            writer.print(AnsiSeq.moveUp(renderedRows - 1));
-        }
-        writer.print('\r');
+        writer.print(AnsiSeq.CLEAR_LINE);
         renderedRows = 0;
     }
 
@@ -228,45 +192,11 @@ final class InlineActivityDisplay implements AutoCloseable {
         int cols = Math.max(20, TerminalCapabilities.safeSize(terminal).getColumns() - 1);
         List<AttributedString> lines = new ArrayList<>();
         if (!showCancelHint) {
-            lines.add(fit("  ✢ " + label + "...", cols, STATUS_STYLE));
-            lines.add(fit("    " + progressBar(cols) + " " + progressPercent() + "%", cols, STATUS_STYLE));
+            lines.add(fit("  " + spinner() + " " + label + "... " + elapsedSeconds() + "s", cols, STATUS_STYLE));
             return lines;
         }
-        String suffix = showCancelHint
-                ? " (Esc cancel, " + elapsedSeconds() + "s)"
-                : " (" + elapsedSeconds() + "s)";
+        String suffix = " (Esc cancel, " + elapsedSeconds() + "s)";
         lines.add(fit("  " + spinner() + " " + label + "..." + suffix, cols, STATUS_STYLE));
-
-        List<String> quoteLines = reasoningLines();
-        int quoteWidth = Math.max(12, cols - 4);
-        int start = Math.max(0, quoteLines.size() - MAX_REASONING_ROWS);
-        for (int i = start; i < quoteLines.size(); i++) {
-            AttributedString quote = new AttributedString("│ " + quoteLines.get(i), QUOTE_STYLE);
-            for (AttributedString part : quote.columnSplitLength(quoteWidth, true, true, terminal)) {
-                lines.add(fit("  " + part.toString(), cols, QUOTE_STYLE));
-                if (lines.size() > MAX_REASONING_ROWS + 1) {
-                    return lines;
-                }
-            }
-        }
-        return lines;
-    }
-
-    private List<String> reasoningLines() {
-        String content = reasoning.toString()
-                .replace("\r\n", "\n")
-                .replace('\r', '\n')
-                .trim();
-        if (content.isEmpty()) {
-            return List.of();
-        }
-        List<String> lines = new ArrayList<>();
-        for (String line : content.split("\\R+")) {
-            String normalized = line.replaceAll("\\s+", " ").trim();
-            if (!normalized.isEmpty()) {
-                lines.add(normalized);
-            }
-        }
         return lines;
     }
 
@@ -287,27 +217,9 @@ final class InlineActivityDisplay implements AutoCloseable {
         return SPINNER_FRAMES[Math.floorMod(frame, SPINNER_FRAMES.length)];
     }
 
-    private String progressBar(int cols) {
-        int width = Math.max(10, Math.min(40, cols - 12));
-        int percent = progressPercent();
-        int filled = Math.max(1, Math.min(width - 1, (int) Math.round(width * percent / 100.0)));
-        return "▰".repeat(filled) + "▱".repeat(width - filled);
-    }
-
-    private int progressPercent() {
-        long elapsedMillis = Math.max(0L, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
-        double curve = 1.0 - Math.exp(-elapsedMillis / 15_000.0);
-        return Math.max(1, Math.min(95, (int) Math.round(curve * 95)));
-    }
 
     private long elapsedSeconds() {
         return Math.max(0, TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startedNanos));
     }
 
-    private void trimReasoning() {
-        if (reasoning.length() <= MAX_REASONING_CHARS) {
-            return;
-        }
-        reasoning.delete(0, reasoning.length() - MAX_REASONING_CHARS);
-    }
 }

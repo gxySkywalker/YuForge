@@ -42,8 +42,10 @@ class InlineActivityDisplayTest {
         assertTrue(output.contains("Thinking"), "thinking panel should keep the spinner label: " + output);
         assertTrue(output.contains("Thinking... (Esc cancel,"),
                 "thinking panel should keep a stable label and move the animation to the spinner: " + output);
-        assertTrue(output.contains("| trying to read file") || output.contains("│ trying to read file"),
-                "thinking panel should show quoted reasoning: " + output);
+        assertFalse(output.contains("trying to read file"),
+                "single-line activity must not expand into reasoning rows: " + output);
+        assertFalse(output.contains(AnsiSeq.moveUp(1)),
+                "single-line activity must never move into transcript history: " + output);
     }
 
     @Test
@@ -82,6 +84,25 @@ class InlineActivityDisplayTest {
         String output = terminalSink.toString(StandardCharsets.UTF_8);
         assertFalse(output.contains("YuForge"),
                 "idle activity display must not paint when status updates: " + output);
+    }
+
+    @Test
+    void thinkingTimerRepaintsOnlyCurrentLine() throws Exception {
+        ByteArrayOutputStream terminalSink = new ByteArrayOutputStream();
+        Terminal terminal = mockAnsiTerminal(terminalSink);
+
+        try (InlineActivityDisplay display = new InlineActivityDisplay(terminal,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8))) {
+            display.begin("Thinking");
+            Thread.sleep(350L);
+            display.end();
+        }
+
+        String output = terminalSink.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("Thinking... (Esc cancel,"), output);
+        assertTrue(output.contains("\r"), output);
+        assertTrue(output.contains(AnsiSeq.CLEAR_LINE), output);
+        assertFalse(output.contains(AnsiSeq.moveUp(1)), output);
     }
 
     private static Terminal mockAnsiTerminal(ByteArrayOutputStream sink) {

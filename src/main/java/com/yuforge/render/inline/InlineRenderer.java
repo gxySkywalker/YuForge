@@ -70,9 +70,12 @@ public final class InlineRenderer implements Renderer {
         this.statusBar = bottomDockEnabled() && TerminalCapabilities.supportsScrollRegion(terminal)
                 ? new BottomStatusBar(terminal, out)
                 : null;
-        // 普通滚屏不维护 live area：它需要回退光标清理旧帧，在 resize、CJK 换行和异步
-        // 输出同时发生时无法可靠知道物理行。实验性 dock 也不改变这个默认约束。
-        this.activityDisplay = null;
+        // 活动态严格限制为当前单行：只用 CR + CLEAR_LINE 重绘，不上移光标、不触碰
+        // scrollback。这样可以动态展示 spinner/耗时，同时避开 Windows Terminal resize
+        // 时多行 live area 留下残影的问题；非 ANSI 环境继续退化为 append-only 事件。
+        this.activityDisplay = TerminalCapabilities.supportsAnsi(terminal)
+                ? new InlineActivityDisplay(terminal, out)
+                : null;
         this.blockRegistry = new BlockRegistry();
         this.stream = createTranscriptStream(out);
     }
@@ -178,6 +181,8 @@ public final class InlineRenderer implements Renderer {
         } else if (!closed && !simpleThinkingVisible) {
             // 进入同一条 transcript，保证它与首个正文/工具卡片严格有序。
             stream.println("· " + (label == null || label.isBlank() ? "Thinking" : label) + "…");
+        }
+        if (!closed && !simpleThinkingVisible) {
             simpleThinkingVisible = true;
             simpleThinkingStartedNanos = System.nanoTime();
             turnHadActivity = true;
@@ -198,8 +203,8 @@ public final class InlineRenderer implements Renderer {
         }
         if (activityDisplay != null) {
             activityDisplay.end();
-        } else if (simpleThinkingVisible) {
-            // 普通滚屏只追加、从不回退清除 activity 行；正文会自然出现在其后。
+        }
+        if (simpleThinkingVisible) {
             simpleThinkingVisible = false;
             long elapsedMillis = Math.max(0L,
                     TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - simpleThinkingStartedNanos));
