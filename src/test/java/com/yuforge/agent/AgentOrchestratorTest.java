@@ -339,10 +339,10 @@ class AgentOrchestratorTest {
         String transcript = output.toString(StandardCharsets.UTF_8);
 
         assertTrue(transcript.contains("Multi-Agent"), transcript);
-        assertTrue(transcript.contains("Planner · ready · 1 steps"), transcript);
-        assertTrue(transcript.contains("Worker worker-1 · 1/1"), transcript);
-        assertTrue(transcript.contains("Reviewer reviewer · 1/1"), transcript);
-        assertTrue(transcript.contains("Completed · 1/1"), transcript);
+        assertTrue(transcript.contains("规划者 · 就绪 · 1 步"), transcript);
+        assertTrue(transcript.contains("执行者 worker-1 · 1/1"), transcript);
+        assertTrue(transcript.contains("审查者 reviewer · 1/1"), transcript);
+        assertTrue(transcript.contains("完成 · 1/1"), transcript);
         assertFalse(transcript.contains("WORKER_INTERNAL_NARRATIVE"), transcript);
         assertTrue(finalResult.contains("WORKER_INTERNAL_NARRATIVE"), finalResult);
     }
@@ -447,9 +447,9 @@ class AgentOrchestratorTest {
 
         String finalResult = orchestrator.run("测试失败阻塞");
 
-        assertTrue(finalResult.contains("finished with failed steps"));
-        assertTrue(finalResult.contains("[step_1] failed · 第一步"));
-        assertTrue(finalResult.contains("[step_2] pending · 第二步"));
+        assertTrue(finalResult.contains("存在失败步骤"));
+        assertTrue(finalResult.contains("[step_1] 失败 · 第一步"));
+        assertTrue(finalResult.contains("[step_2] 等待 · 第二步"));
     }
 
     private static LlmClient.ChatResponse response(String content) {

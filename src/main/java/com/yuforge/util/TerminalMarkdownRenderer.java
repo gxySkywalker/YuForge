@@ -178,7 +178,7 @@ public final class TerminalMarkdownRenderer {
         ensureBlockSpacing();
         writeLine(AnsiStyle.heading(content), BlockType.HEADING);
         char underline = level == 1 ? '=' : '-';
-        writeLine(AnsiStyle.subtle(String.valueOf(underline).repeat(Math.max(content.length(), 4))), BlockType.HEADING);
+        writeLine(AnsiStyle.muted(String.valueOf(underline).repeat(Math.max(content.length(), 4))), BlockType.HEADING);
         writeBlankLine();
     }
 
@@ -227,7 +227,7 @@ public final class TerminalMarkdownRenderer {
         int[] widths = allocateTableWidths(rows, naturalWidths, columnCount);
 
         String border = buildTableBorder(widths);
-        writeLine(AnsiStyle.subtle(border), BlockType.TABLE);
+        writeLine(AnsiStyle.muted(border), BlockType.TABLE);
         for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
             List<String> row = rows.get(rowIndex);
             List<List<String>> wrappedCells = new ArrayList<>();
@@ -249,10 +249,10 @@ public final class TerminalMarkdownRenderer {
                 writeLine(renderedLine, BlockType.TABLE);
             }
             if (rowIndex == 0 && rows.size() > 1) {
-                writeLine(AnsiStyle.subtle(border), BlockType.TABLE);
+                writeLine(AnsiStyle.muted(border), BlockType.TABLE);
             }
         }
-        writeLine(AnsiStyle.subtle(border), BlockType.TABLE);
+        writeLine(AnsiStyle.muted(border), BlockType.TABLE);
         writeBlankLine();
     }
 
@@ -324,7 +324,7 @@ public final class TerminalMarkdownRenderer {
         String leftHeader = sanitizeInline(header.get(0));
         String rightHeader = sanitizeInline(header.get(1));
         writeLine(AnsiStyle.emphasis(leftHeader + " / " + rightHeader), BlockType.TABLE);
-        writeLine(AnsiStyle.subtle("-".repeat(Math.max((leftHeader + " / " + rightHeader).length(), 8))), BlockType.TABLE);
+        writeLine(AnsiStyle.muted("-".repeat(Math.max((leftHeader + " / " + rightHeader).length(), 8))), BlockType.TABLE);
 
         for (int i = 1; i < rows.size(); i++) {
             List<String> row = rows.get(i);

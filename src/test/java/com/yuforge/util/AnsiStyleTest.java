@@ -26,6 +26,21 @@ class AnsiStyleTest {
         assertTrue(block.contains("第二行"), block);
     }
 
+    @Test
+    void semanticStylesKeepReadableTextAndSeparateMutedMetadata() {
+        assertEquals("工具摘要", stripAnsi(AnsiStyle.subtle("工具摘要")));
+        assertEquals("耗时", stripAnsi(AnsiStyle.muted("耗时")));
+        assertEquals("进行中", stripAnsi(AnsiStyle.status("进行中")));
+        assertEquals("完成", stripAnsi(AnsiStyle.success("完成")));
+        assertEquals("警告", stripAnsi(AnsiStyle.warning("警告")));
+
+        if (AnsiStyle.isEnabled()) {
+            assertTrue(AnsiStyle.subtle("工具摘要").contains("\u001B[90m"));
+            assertFalse(AnsiStyle.subtle("工具摘要").contains("\u001B[2m"));
+            assertTrue(AnsiStyle.muted("耗时").contains("\u001B[2m"));
+        }
+    }
+
     private static String stripAnsi(String value) {
         return value.replaceAll("\u001B\\[[;\\d]*m", "");
     }

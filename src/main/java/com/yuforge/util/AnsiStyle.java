@@ -30,11 +30,28 @@ public final class AnsiStyle {
 
     public static String answerMarker() {
         // Windows Terminal 的部分字体会把几何符号渲染为问号；使用可读的 ASCII 前缀。
-        return wrap(BOLD + GREEN, "Assistant:");
+        return wrap(BOLD + GREEN, "YuForge:");
     }
 
     public static String subtle(String text) {
+        return wrap(GRAY, text);
+    }
+
+    /** 仅用于耗时、边框、页脚等无需持续阅读的三级信息。 */
+    public static String muted(String text) {
         return wrap(DIM + GRAY, text);
+    }
+
+    public static String status(String text) {
+        return wrap(CYAN, text);
+    }
+
+    public static String success(String text) {
+        return wrap(GREEN, text);
+    }
+
+    public static String warning(String text) {
+        return wrap(YELLOW, text);
     }
 
     public static String thinking(String text) {

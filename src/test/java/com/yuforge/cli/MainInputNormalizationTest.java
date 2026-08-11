@@ -165,7 +165,7 @@ class MainInputNormalizationTest {
 
         String replay = sink.toString(StandardCharsets.UTF_8);
         assertTrue(replay.contains("> 查看项目"), replay);
-        assertTrue(replay.contains("Assistant: 这是 Spring Boot 项目"), replay);
+        assertTrue(replay.contains("YuForge: 这是 Spring Boot 项目"), replay);
         assertTrue(replay.contains("[tool result] restored as a safe placeholder"), replay);
         assertFalse(replay.contains("secret system prompt"), replay);
         assertFalse(replay.contains("large tool result"), replay);

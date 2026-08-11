@@ -116,7 +116,7 @@ public final class InlineRenderer implements Renderer {
             statusBar.flushNow();
         }
         if (statusBar == null && turnHadActivity && latestStatus != null) {
-            emit(AnsiStyle.subtle(formatTurnFooter(latestStatus)) + "\n");
+            emit(AnsiStyle.muted(formatTurnFooter(latestStatus)) + "\n");
             turnHadActivity = false;
         }
     }
@@ -225,7 +225,7 @@ public final class InlineRenderer implements Renderer {
         long elapsedMillis = turnThinkingElapsedMillis;
         turnThinkingElapsedMillis = 0L;
         turnThinkingCycles = 0;
-        emit(AnsiStyle.subtle("  Thought for " + formatElapsed(elapsedMillis)) + "\n");
+        emit(AnsiStyle.muted("  Thought for " + formatElapsed(elapsedMillis)) + "\n");
     }
 
     @Override

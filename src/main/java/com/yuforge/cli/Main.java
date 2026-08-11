@@ -2590,7 +2590,7 @@ public class Main {
                     if (!content.isBlank()) out.println("> " + content);
                 }
                 case "assistant" -> {
-                    if (!content.isBlank()) out.println("Assistant: " + content);
+                    if (!content.isBlank()) out.println("YuForge: " + content);
                     if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
                         out.println("  [tools] " + message.toolCalls().size() + " calls (details are not replayed)");
                     }
