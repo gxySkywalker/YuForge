@@ -230,6 +230,17 @@ src/main/java/com/yuforge/
 
 ### 7. 保持代码可读性，不过度抽象
 
+### 8. 工程化 Git 提交工作流
+
+- 以“相对独立、可运行、可验证的能力”为提交边界。一个良好提交应完整包含该能力所需的接口、实现、测试与必要文档；不要按修改文件数量机械拆分，也不要因为只改了几个文件就产生缺少业务意义的碎片提交。
+- 不把互不相关的功能、修复或重构堆进同一个提交。若当前工作区存在用户修改或其他任务遗留改动，只暂存本次能力涉及的文件或补丁，不擅自覆盖、回退或一并提交。
+- 每个能力完成后再提交；尚不可运行、必要测试未通过或实现只完成一半时，不为了制造提交记录提前 commit。
+- commit 前必须依次检查 `git status`、本次提交范围的 `git diff`（必要时同时检查 `git diff --cached`），并运行与改动风险相匹配的测试或验证。无法执行验证时必须说明原因，不得把未验证描述为已通过。
+- commit message 使用清晰的 Conventional Commits 格式：`type(scope): summary`，例如 `feat(memory): implement short term memory compression`、`fix(runtime): fix tool result recovery issue`、`refactor(agent): simplify context management`。类型与 scope 应准确反映该提交的主要业务意义。
+- 文档、测试和实现属于同一能力时应放入同一个提交；纯文档、测试基建或仓库治理若本身构成独立且有意义的交付，也可以单独提交。
+- 每次 commit 后向用户报告：commit id、本次提交包含的功能、修改的核心文件、验证结果和下一步建议。
+- 除非用户明确要求，否则只创建本地 commit，不自动 push、创建 tag、发布 Release 或打开 PR。
+
 ## 验证路径
 
 | 场景 | 命令 |
