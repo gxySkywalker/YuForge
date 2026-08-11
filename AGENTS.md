@@ -117,7 +117,7 @@ src/main/java/com/yuforge/
 - inline 工具批次的成功结果默认收进折叠边界，不得在卡片下逐条重复打印 `[ok]`；错误、超时、策略拒绝与用户拒绝仍需立即进入 transcript。多列 Markdown 表格在有效列宽不足时自动降级为“记录 + 字段”布局，禁止把路径或类名压成逐字符竖排。
 - inline 流式代码块先显示稳定的 `generating code` 行，结束时追加可折叠代码块；不得依赖 ANSI `moveUp` / `CLEAR_TO_EOS` 回退覆盖已写出的 transcript，避免宽字符换行或异步输出导致 scrollback 错位。
 - 交互期输出应优先走 `Renderer.stream()`；`Main`、`PlanExecuteAgent`、`Planner`、`AgentOrchestrator` 都支持把输出流接到 inline renderer，避免直接争抢 stdout。`/plan` 与 `/team` 的单步直连工具调用还应传入 `Renderer` 本体，复用可折叠工具块；Team 并行批次必须继续写独立缓冲流、按 step_id 顺序 flush，不能从多个 Worker 线程直接调用 renderer。`CodeIndex` 的索引进度通过 `ProgressListener` 注入，`/index` 应绑定到当前 renderer 输出流。
-- `/team` 默认输出采用阶段化摘要：`Planning → Plan ready → Executing n/N → Reviewing → Completed`。Planner 的探索旁白/计划 JSON 与 Reviewer 的审查 JSON 只供 Orchestrator 内部消费，不得写入用户 transcript；Worker 的实际执行输出与折叠工具块保留。Team 专属状态标签使用 ASCII/文字，避免 Windows 字体把 emoji 渲染为问号。
+- `/team` 默认输出采用角色状态摘要：`Planner planning/ready → Worker n/N → Reviewer n/N → Completed`。Planner 的探索旁白/计划 JSON、Worker 中间自然语言正文与 Reviewer 审查 JSON 只供 Orchestrator 内部消费，不得重复写入用户 transcript；工具卡片、失败原因和最终步骤结果保留。计划列表最多展示 8 项且单项有长度上限。Team 专属状态标签使用 ASCII/文字，避免 Windows 字体把 emoji 渲染为问号。
 - Phase 22 开始，`InlineRenderer` 可绑定当前 `LineReader`；当 `LineReader.isReading()` 为 true 时，`Renderer.stream()` 的完整行输出优先通过 `LineReader#printAbove` 显示在输入行上方，未绑定 / 非读取态 / 测试路径回退到原 `PrintStream`。
 - Markdown 表格渲染要按当前终端列宽分配列宽；长内容在单元格内部换行，不能依赖终端自动折行把整行表格打散。
 - Markdown fenced code block 使用轻量词法高亮区分常见关键字、字符串、数字和注释；高亮只能添加 ANSI SGR 样式，必须保持原始代码字符完全不变，未知语言安全退化为原文。

@@ -62,6 +62,7 @@ public class SubAgent {
     private final PromptAssembler promptAssembler = PromptAssembler.createDefault();
     private final RuntimeContextFormatter runtimeContextFormatter = RuntimeContextFormatter.systemDefault();
     private Renderer renderer;
+    private boolean showWorkerTranscript = true;
 
     public SubAgent(String name, AgentRole role, LlmClient llmClient, ToolRegistry toolRegistry) {
         this.name = name;
@@ -92,6 +93,11 @@ public class SubAgent {
     /** 注入直连终端渲染器；并行批次使用独立缓冲流时会自动回退为纯文本输出。 */
     public void setRenderer(Renderer renderer) {
         this.renderer = renderer;
+    }
+
+    /** Multi-Agent 编排器可关闭 Worker 中间正文，只保留工具卡片和最终汇总。 */
+    public void setShowWorkerTranscript(boolean showWorkerTranscript) {
+        this.showWorkerTranscript = showWorkerTranscript;
     }
 
     /**
@@ -209,7 +215,8 @@ public class SubAgent {
                 Path.of(toolRegistry.getProjectPath())));
 
         Renderer activeRenderer = renderer != null && out == renderer.stream() ? renderer : null;
-        SubAgentStreamRenderer streamRenderer = new SubAgentStreamRenderer(name, role, out, activeRenderer);
+        SubAgentStreamRenderer streamRenderer = new SubAgentStreamRenderer(
+                name, role, out, activeRenderer, showWorkerTranscript);
 
         AgentBudget budget = AgentBudget.fromLlmClient(llmClient);
         ToolAttemptTracker attemptTracker = new ToolAttemptTracker();
@@ -400,8 +407,9 @@ public class SubAgent {
         List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
         for (ToolExecutionResult result : results) {
             String summary = ToolResultSummary.format(result);
-            boolean suppressSuccess = renderer != null && out == renderer.stream()
-                    && !renderer.rendersSuccessfulToolResultSummaries()
+            boolean suppressSuccess = (!showWorkerTranscript
+                    || (renderer != null && out == renderer.stream()
+                    && !renderer.rendersSuccessfulToolResultSummaries()))
                     && (result.diagnostic() == null
                     || result.diagnostic().status() == ToolResultDiagnostic.Status.SUCCESS);
             if (out != null && !suppressSuccess && !summary.isBlank()) {
@@ -527,6 +535,7 @@ public class SubAgent {
         private final AgentRole role;
         private final PrintStream out;
         private final Renderer renderer;
+        private final boolean showWorkerTranscript;
         private final StringBuilder pendingReasoning = new StringBuilder();
         private final StringBuilder lateReasoning = new StringBuilder();
         private TerminalMarkdownRenderer reasoningRenderer;
@@ -535,11 +544,13 @@ public class SubAgent {
         private boolean contentStarted;
         private boolean streamedOutput;
 
-        private SubAgentStreamRenderer(String agentName, AgentRole role, PrintStream out, Renderer renderer) {
+        private SubAgentStreamRenderer(String agentName, AgentRole role, PrintStream out, Renderer renderer,
+                                       boolean showWorkerTranscript) {
             this.agentName = agentName;
             this.role = role;
             this.out = out;
             this.renderer = renderer;
+            this.showWorkerTranscript = showWorkerTranscript;
         }
 
         private void beginThinking() {
@@ -558,7 +569,7 @@ public class SubAgent {
             // Planner/Reviewer 的原始流只用于内部编排：Planner 可能在工具探索阶段多次输出
             // 旁白，Reviewer 通常返回机器可读 JSON。把它们刷进用户 transcript 会造成
             // 重复“规划结果/审查结果”和原始协议噪音；用户只看 Orchestrator 的阶段摘要。
-            if (role != AgentRole.WORKER) {
+            if (role != AgentRole.WORKER || !showWorkerTranscript) {
                 return;
             }
             if (!ReasoningDisplayPolicy.showRawReasoning()) {
@@ -591,7 +602,7 @@ public class SubAgent {
                 return;
             }
             endThinking();
-            if (role != AgentRole.WORKER) {
+            if (role != AgentRole.WORKER || !showWorkerTranscript) {
                 return;
             }
             if (!contentStarted) {

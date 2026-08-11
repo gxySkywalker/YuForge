@@ -118,6 +118,7 @@ public class AgentOrchestrator {
                 new SubAgent("worker-1", AgentRole.WORKER, llmClient, toolRegistry),
                 new SubAgent("worker-2", AgentRole.WORKER, llmClient, toolRegistry)
         );
+        this.workers.forEach(worker -> worker.setShowWorkerTranscript(false));
         this.reviewer = new SubAgent("reviewer", AgentRole.REVIEWER, llmClient, toolRegistry);
         if (renderer != null) {
             this.planner.setRenderer(renderer);
@@ -163,8 +164,8 @@ public class AgentOrchestrator {
         }
 
         // 1. 规划阶段：让规划者拆解任务
-        out.println(AnsiStyle.heading("Planning"));
-        out.println(AnsiStyle.subtle("  Planner 正在探索项目并拆解任务..."));
+        out.println(AnsiStyle.heading("Multi-Agent"));
+        out.println(AnsiStyle.subtle("  Planner · planning"));
 
         AgentMessage planMessage = AgentMessage.task("orchestrator",
                 "请为以下任务制定执行计划：\n" + userInput);
@@ -188,7 +189,7 @@ public class AgentOrchestrator {
         if (steps.isEmpty()) {
             log.warn("Planner returned invalid plan, requesting one structured repair; preview={}",
                     preview(planResult.content(), 500));
-            out.println(AnsiStyle.subtle("  Plan 格式不完整，正在自动修复一次..."));
+            out.println(AnsiStyle.subtle("  Planner · repairing invalid plan"));
             AgentMessage repaired = planner.execute(AgentMessage.task("orchestrator", """
                     你上一轮没有输出可解析的计划 JSON。现在不要调用工具、不要解释、不要输出 Markdown，
                     只根据已经获得的信息重新输出包含非空 steps 数组的合法 JSON。
@@ -203,11 +204,11 @@ public class AgentOrchestrator {
         }
         planner.clearHistory();
 
-        out.println(AnsiStyle.heading("Plan ready · " + steps.size() + " steps"));
+        out.println(AnsiStyle.subtle("  Planner · ready · " + steps.size() + " steps"));
         out.println(summarizeSteps(steps));
 
         // 3. 执行阶段：按依赖顺序分配给执行者
-        out.println(AnsiStyle.heading("Executing"));
+        out.println(AnsiStyle.subtle("  Execution · started"));
         Map<String, Integer> retryCount = new ConcurrentHashMap<>();
         int singleStepCursor = 0;
         int batchIndex = 0;
@@ -232,8 +233,8 @@ public class AgentOrchestrator {
                 worker.clearHistory();
             } else {
                 // 多步批次：真正并行执行，每步用独立的 PrintStream 缓冲，完成后按 step_id 顺序 flush
-                out.println(AnsiStyle.section("Parallel batch " + batchIndex + " · " + executable.size()
-                        + " steps · max " + workers.size() + " workers"));
+                out.println(AnsiStyle.subtle("  Workers · parallel batch " + batchIndex + " · " + executable.size()
+                        + " steps · max " + workers.size()));
                 runBatchParallel(executable, steps, retryCount);
             }
         }
@@ -558,8 +559,8 @@ public class AgentOrchestrator {
                          PrintStream out) {
         int ordinal = Math.max(1, steps.indexOf(step) + 1);
         String progress = ordinal + "/" + steps.size();
-        out.println(AnsiStyle.section("Executing " + progress + " · " + step.description()
-                + " [" + worker.getName() + "]"));
+        out.println(AnsiStyle.section("  Worker " + worker.getName() + " · " + progress + " · "
+                + compactStatusText(step.description(), 100)));
         if (CancellationContext.isCancelled()) {
             updateStep(steps, step.id(), step.withFailed("用户取消"));
             out.println("Cancelled [" + step.id() + "]\n");
@@ -585,7 +586,7 @@ public class AgentOrchestrator {
             return;
         }
 
-        out.println(AnsiStyle.subtle("  Reviewing " + progress + " · " + reviewer.getName()));
+        out.println(AnsiStyle.subtle("  Reviewer " + reviewer.getName() + " · " + progress));
         AgentMessage reviewResult = reviewer.review(step.description(), result.content(), out);
         reviewer.clearHistory();
 
@@ -601,7 +602,7 @@ public class AgentOrchestrator {
 
         if (approved) {
             updateStep(steps, step.id(), step.withResult(acceptedResult));
-            out.println(AnsiStyle.section("  Completed " + progress) + "\n");
+            out.println(AnsiStyle.section("  Completed · " + progress) + "\n");
             return;
         }
 
@@ -648,7 +649,7 @@ public class AgentOrchestrator {
 
         updateStep(steps, step.id(), step.withResult(acceptedResult));
         if (approved) {
-            out.println(AnsiStyle.section("  Completed " + progress + " after retry") + "\n");
+            out.println(AnsiStyle.section("  Completed · " + progress + " · after retry") + "\n");
         } else {
             out.println("Retry limit reached [" + step.id() + "]：保留当前结果\n");
         }
@@ -677,18 +678,30 @@ public class AgentOrchestrator {
 
     private String summarizeSteps(List<ExecutionStep> steps) {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < steps.size(); i++) {
+        int visible = Math.min(steps.size(), 8);
+        for (int i = 0; i < visible; i++) {
             ExecutionStep step = steps.get(i);
-            sb.append(String.format("  %d. %s%n", i + 1, step.description()));
+            sb.append(String.format("    %d. %s%n", i + 1, compactStatusText(step.description(), 100)));
+        }
+        if (steps.size() > visible) {
+            sb.append("    ... ").append(steps.size() - visible).append(" more steps\n");
         }
         return sb.toString();
+    }
+
+    private static String compactStatusText(String text, int maxChars) {
+        String normalized = text == null ? "" : text.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= maxChars) {
+            return normalized;
+        }
+        return normalized.substring(0, Math.max(1, maxChars - 3)) + "...";
     }
 
     /**
      * 构建最终汇总。
      *
-     * 注意：Worker/Reviewer 的完整输出在执行阶段已经通过流式渲染打印给用户，
-     * 此处只返回"步骤状态 + 简短预览"作为总结，避免同一段内容被打印 2-3 次。
+     * Worker/Reviewer 的中间正文不进入默认 transcript；这里返回步骤状态和结果预览，
+     * 作为用户可见的唯一结果摘要。
      */
     private String buildFinalResult(List<ExecutionStep> steps) {
         StringBuilder result = new StringBuilder();

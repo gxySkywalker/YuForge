@@ -9,8 +9,11 @@ import com.yuforge.memory.LongTermMemory;
 import com.yuforge.memory.MemoryManager;
 import com.yuforge.tool.ToolRegistry;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -313,6 +316,35 @@ class AgentOrchestratorTest {
 
         assertTrue(finalResult.contains("第三次执行结果"));
         assertFalse(finalResult.contains("第二次执行结果"));
+    }
+
+    @Test
+    void shouldRenderRoleStatusesWithoutRepeatingWorkerNarrative(@TempDir Path tempDir) {
+        StubGLMClient llmClient = new StubGLMClient(List.of(
+                response("""
+                        {"summary":"单步任务","steps":[
+                          {"id":"s1","description":"检查缓存实现并给出结论","type":"ANALYSIS","dependencies":[]}
+                        ]}
+                        """),
+                response("WORKER_INTERNAL_NARRATIVE：这里是很长的中间分析正文"),
+                response("{\"approved\":true,\"summary\":\"通过\",\"issues\":[]}")));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AgentOrchestrator orchestrator = new AgentOrchestrator(
+                llmClient,
+                new ToolRegistry(),
+                new NoOpMemoryManager(tempDir.toFile()),
+                new PrintStream(output, true, StandardCharsets.UTF_8));
+
+        String finalResult = orchestrator.run("分析缓存实现");
+        String transcript = output.toString(StandardCharsets.UTF_8);
+
+        assertTrue(transcript.contains("Multi-Agent"), transcript);
+        assertTrue(transcript.contains("Planner · ready · 1 steps"), transcript);
+        assertTrue(transcript.contains("Worker worker-1 · 1/1"), transcript);
+        assertTrue(transcript.contains("Reviewer reviewer · 1/1"), transcript);
+        assertTrue(transcript.contains("Completed · 1/1"), transcript);
+        assertFalse(transcript.contains("WORKER_INTERNAL_NARRATIVE"), transcript);
+        assertTrue(finalResult.contains("WORKER_INTERNAL_NARRATIVE"), finalResult);
     }
 
     @Test
