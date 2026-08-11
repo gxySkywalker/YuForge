@@ -28,7 +28,7 @@ public class TuiConfigPanel {
     public void showConfigDialog() {
         String info = formatConfigInfo();
         MessageDialogBuilder dialog = new MessageDialogBuilder()
-                .setTitle("⚙️  配置")
+                .setTitle("  配置")
                 .setText(info)
                 .addButton(MessageDialogButton.OK);
         dialog.build().showDialog(gui);

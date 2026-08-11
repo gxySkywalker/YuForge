@@ -39,9 +39,9 @@ public class StatusPane extends Panel {
         setLayoutManager(new LinearLayout(Direction.VERTICAL));
 
         // 模型信息
-        this.modelLabel = new Label("🤖 " + (llmClient != null ? llmClient.getModelName() : "?"));
-        this.tokenLabel = new Label("💡 --");
-        this.modeLabel = new Label("🔄 ReAct");
+        this.modelLabel = new Label("YuForge " + (llmClient != null ? llmClient.getModelName() : "?"));
+        this.tokenLabel = new Label("Tip: --");
+        this.modeLabel = new Label(" ReAct");
         this.timeLabel = new Label("⏱ --");
 
         addComponent(modelLabel);
@@ -58,7 +58,7 @@ public class StatusPane extends Panel {
      * @param cached  缓存的 token
      */
     public void updateTokenUsage(long used, long budget, long cached) {
-        tokenLabel.setText(String.format("💡 %d/%d", used, budget));
+        tokenLabel.setText(String.format("Tip: %d/%d", used, budget));
         if (cached > 0) {
             tokenLabel.setText(tokenLabel.getText() + String.format(" (cached: %d)", cached));
         }
@@ -70,7 +70,7 @@ public class StatusPane extends Panel {
      * @param mode 模式（ReAct / Plan / Team）
      */
     public void updateMode(String mode) {
-        modeLabel.setText("🔄 " + (mode != null ? mode : "ReAct"));
+        modeLabel.setText(" " + (mode != null ? mode : "ReAct"));
     }
 
     /**

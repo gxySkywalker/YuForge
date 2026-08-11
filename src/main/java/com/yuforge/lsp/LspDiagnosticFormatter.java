@@ -23,7 +23,7 @@ public final class LspDiagnosticFormatter {
         prompt.append("Agent 刚修改代码后，系统收集到以下诊断。请优先修复 error，再处理 warning；不要原样重复同一处错误写法。\n\n");
 
         StringBuilder display = new StringBuilder();
-        display.append("\n").append(AnsiStyle.heading("🔎 LSP 诊断")).append("\n");
+        display.append("\n").append(AnsiStyle.heading("LSP 诊断")).append("\n");
 
         for (int i = 0; i < count; i++) {
             LspDiagnostic d = diagnostics.get(i);

@@ -49,8 +49,8 @@ final class ChangeVerificationTracker {
             return "";
         }
         return evidence == null
-                ? "⚠️ 验证：已修改工作区，但本轮没有构建、测试、服务就绪或回读证据；不要将结果视为已验证完成。"
-                : "✅ 验证：" + evidence + "。";
+                ? "[warn] 验证：已修改工作区，但本轮没有构建、测试、服务就绪或回读证据；不要将结果视为已验证完成。"
+                : "[ok] 验证：" + evidence + "。";
     }
 
     private static boolean isFailure(String result) {

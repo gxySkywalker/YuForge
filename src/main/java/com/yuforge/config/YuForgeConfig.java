@@ -96,7 +96,7 @@ public class YuForgeConfig {
             try {
                 return mapper.readValue(CONFIG_FILE.toFile(), YuForgeConfig.class);
             } catch (IOException e) {
-                System.err.println("⚠️ 配置文件读取失败，使用默认配置: " + e.getMessage());
+                System.err.println("[warn] 配置文件读取失败，使用默认配置: " + e.getMessage());
             }
         }
         return new YuForgeConfig();
@@ -107,7 +107,7 @@ public class YuForgeConfig {
             Files.createDirectories(CONFIG_DIR);
             mapper.writeValue(CONFIG_FILE.toFile(), this);
         } catch (IOException e) {
-            System.err.println("⚠️ 配置保存失败: " + e.getMessage());
+            System.err.println("[warn] 配置保存失败: " + e.getMessage());
         }
     }
 

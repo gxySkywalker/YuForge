@@ -74,7 +74,7 @@ public final class SlashPalette {
         out.println();
         out.println(AnsiStyle.heading("┌─ " + (title == null ? "选择" : title) + " ─"));
         for (int i = 0; i < items.size(); i++) {
-            String prefix = (i == selected) ? "▶ " : "  ";
+            String prefix = (i == selected) ? "> " : "  ";
             String numberHint = numberShortcuts && i < 9 ? "[" + (i + 1) + "] " : "";
             String line = "│ " + prefix + numberHint + items.get(i);
             if (i == selected) {
@@ -84,8 +84,8 @@ public final class SlashPalette {
             }
         }
         String hint = numberShortcuts
-                ? "└─ ↑↓ 切换  Enter 确认  Esc 取消  数字键直选"
-                : "└─ ↑↓ 移动  Enter 确认  Esc 拒绝";
+                ? "└─ Up/Down 切换  Enter 确认  Esc 取消  数字键直选"
+                : "└─ Up/Down 移动  Enter 确认  Esc 拒绝";
         out.println(AnsiStyle.subtle(hint));
         out.flush();
         return items.size() + 3;

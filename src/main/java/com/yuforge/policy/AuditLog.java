@@ -75,7 +75,7 @@ public class AuditLog {
             }
         } catch (IOException e) {
             // 审计失败不能影响主流程
-            System.err.println("⚠️ 审计日志写入失败: " + e.getMessage());
+            System.err.println("[warn] 审计日志写入失败: " + e.getMessage());
         }
     }
 

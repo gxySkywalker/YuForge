@@ -169,7 +169,7 @@ public class Agent {
             if (CancellationContext.isCancelled()) {
                 log.info("ReAct run cancelled before iteration");
                 pushStatus(budget, startNanos, "idle");
-                return "⏹️ 已取消当前任务。";
+                return "[cancel] 已取消当前任务。";
             }
             // 调 LLM 前评估 conversationHistory 是否接近 window 上限；超阈值就把早期消息压缩成摘要。
             // 这是与第 3 期 Memory 短期记忆压缩并行的另一道压缩——后者只压 shortTermMemory，
@@ -183,7 +183,7 @@ public class Agent {
                         exitReason, budget.iteration(),
                         budget.totalInputTokens() + budget.totalOutputTokens(), budget.tokenBudget());
                 pushStatus(budget, startNanos, "idle");
-                return "❌ " + description;
+                return "[error] " + description;
             }
 
             int iteration = budget.beginIteration();
@@ -205,7 +205,7 @@ public class Agent {
                     log.info("ReAct run cancelled after LLM response");
                     streamRenderer.finish();
                     pushStatus(budget, startNanos, "idle");
-                    return "⏹️ 已取消当前任务。";
+                    return "[cancel] 已取消当前任务。";
                 }
 
                 budget.recordTokens(response.inputTokens(), response.outputTokens(), response.cachedInputTokens());
@@ -240,7 +240,7 @@ public class Agent {
                     if (rejected != null) {
                         streamRenderer.finish();
                         pushStatus(budget, startNanos, "idle");
-                        return "⏹️ 已按你的决定停止当前任务：" + rejected.userRejectionReason();
+                        return "[cancel] 已按你的决定停止当前任务：" + rejected.userRejectionReason();
                     }
                     pushStatus(budget, startNanos, "running");
 
@@ -280,7 +280,7 @@ public class Agent {
             } catch (IOException e) {
                 log.error("LLM call failed in ReAct loop", e);
                 streamRenderer.finish();
-                return "❌ 调用 LLM 失败: " + e.getMessage();
+                return "[error] 调用 LLM 失败: " + e.getMessage();
             }
         }
     }
@@ -397,9 +397,9 @@ public class Agent {
             ConversationHistoryCompactor.ContextManagementResult result =
                     historyCompactor.manageIfNeeded(conversationHistory, trigger);
             if (result.compacted()) {
-                renderer().stream().println("📦 上下文接近窗口上限，已把早期对话压缩为摘要后继续。");
+                renderer().stream().println("[context] 上下文接近窗口上限，已把早期对话压缩为摘要后继续。");
             } else if (result.archivedToolResults() > 0) {
-                renderer().stream().println("📦 已归档 " + result.archivedToolResults()
+                renderer().stream().println("[context] 已归档 " + result.archivedToolResults()
                         + " 个旧工具结果；需要时可按 artifact_id 恢复。");
             }
         } catch (Exception e) {
@@ -549,7 +549,7 @@ public class Agent {
         int triggerRemaining = Math.max(0, triggerTokens - total);
 
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("📊 Context Usage   %s   window: %s%n",
+        sb.append(String.format("[context] Context Usage   %s   window: %s%n",
                 modelLabel(), formatTokens(window)));
         sb.append("\n  ").append(progressBar(ratio, 30))
                 .append(String.format("  %d%%  (%s / %s)%n",
@@ -777,7 +777,8 @@ public class Agent {
     private String webSearchSummary(ToolExecutionResult result) {
         String text = result.result() == null ? "" : result.result();
         boolean stepSearch = isStepSearchResult(text);
-        if (text.startsWith("搜索失败") || text.startsWith("⚠️") || text.contains("未找到相关结果")) {
+        if (text.startsWith("搜索失败") || text.startsWith("\u26A0") || text.startsWith("[warn]")
+                || text.contains("未找到相关结果")) {
             return compactOneLine(text, 120);
         }
         long count = text.lines().filter(line -> line.matches("^\\d+\\.\\s+.*")).count();
@@ -797,20 +798,20 @@ public class Agent {
         String url = extractJsonArg(result.argumentsJson(), "url");
         String target = url.isBlank() ? "页面" : compactOneLine(url.replaceFirst("^https?://", ""), 80);
         String verb = stepSearch ? "StepSearch · 抓取 " : "抓取 ";
-        if (text.startsWith("抓取失败") || text.startsWith("❌")) {
+        if (text.startsWith("抓取失败") || text.startsWith("\u274C") || text.startsWith("[error]")) {
             return verb + target + " 失败: " + compactOneLine(text, 100);
         }
         String title = text.lines()
-                .filter(line -> line.startsWith("📄 标题:"))
-                .map(line -> line.substring("📄 标题:".length()).trim())
+                .filter(line -> line.startsWith("\uD83D\uDCC4 标题:"))
+                .map(line -> line.substring("\uD83D\uDCC4 标题:".length()).trim())
                 .findFirst()
                 .orElse("");
         String length = text.lines()
-                .filter(line -> line.startsWith("📏 正文"))
+                .filter(line -> line.startsWith("\uD83D\uDCCF 正文"))
                 .findFirst()
                 .orElse("");
         if (!title.isBlank() && !length.isBlank()) {
-            return verb + target + " 完成: " + title + " · " + length.replace("📏 ", "");
+            return verb + target + " 完成: " + title + " · " + length.replace("\uD83D\uDCCF ", "");
         }
         if (!title.isBlank()) {
             return verb + target + " 完成: " + title;
@@ -819,8 +820,8 @@ public class Agent {
     }
 
     private boolean isStepSearchResult(String text) {
-        return text != null && text.startsWith("🔍 [StepSearch]")
-                || text != null && text.startsWith("🌐 [StepSearch]");
+        return text != null && text.startsWith("\uD83D\uDD0D [StepSearch]")
+                || text != null && text.startsWith("\uD83C\uDF10 [StepSearch]");
     }
 
     private String extractJsonArg(String json, String key) {
@@ -872,9 +873,9 @@ public class Agent {
             return normalizedAnswer;
         }
         if (normalizedAnswer.isEmpty()) {
-            return "🧠 思考过程:\n" + normalizedReasoning;
+            return "思考过程:\n" + normalizedReasoning;
         }
-        return "🧠 思考过程:\n" + normalizedReasoning + "\n\n▪ " + normalizedAnswer;
+        return "思考过程:\n" + normalizedReasoning + "\n\n- " + normalizedAnswer;
     }
 
     private String preview(String content, int maxLength) {
@@ -894,12 +895,12 @@ public class Agent {
      * 服务器可能把 reasoning_content 切成多段下发，甚至在 content 开始之后追加 reasoning；
      * 终端是线性的，无法回头修改已写出的文字。渲染策略：
      *
-     * 1. 在 content 出现之前，只要 reasoning 有实质内容（非空白），就立刻流式打印在"🧠 思考过程"下
-     *    同一次用户输入只打印一次"🧠 思考过程"标题；工具调用后的后续推理继续归在同一块下
+     * 1. 在 content 出现之前，只要 reasoning 有实质内容（非空白），就立刻流式打印在" 思考过程"下
+     *    同一次用户输入只打印一次" 思考过程"标题；工具调用后的后续推理继续归在同一块下
      * 2. 仅空白的 reasoning delta 会先暂存，不触发标题——避免出现"空的思考过程"
      * 3. content 一出现就收尾 reasoning 区，用低调标记进入正文并流式输出 content
      * 4. 如果 content 启动之后又收到 reasoning（服务器把思考内容追加在答案之后），
-     *    缓冲到 lateReasoning，最终在 finish() 用"🧠 补充思考"标题独立展示，不会污染回复区
+     *    缓冲到 lateReasoning，最终在 finish() 用" 补充思考"标题独立展示，不会污染回复区
      */
     private static final class StreamRenderer implements LlmClient.StreamListener {
         private final Renderer renderer;
@@ -1059,7 +1060,7 @@ public class Agent {
             String late = lateReasoning.toString().trim();
             if (rendersReasoning() && !late.isEmpty()) {
                 out().println();
-                out().println(AnsiStyle.heading("🧠 补充思考"));
+                out().println(AnsiStyle.heading("补充思考"));
                 TerminalMarkdownRenderer r = newMarkdownRenderer();
                 r.append(late);
                 r.finish();
@@ -1094,7 +1095,7 @@ public class Agent {
             String late = lateReasoning.toString().trim();
             if (rendersReasoning() && !late.isEmpty()) {
                 out().println();
-                out().println(AnsiStyle.heading("🧠 补充思考"));
+                out().println(AnsiStyle.heading("补充思考"));
                 TerminalMarkdownRenderer r = newMarkdownRenderer();
                 r.append(late);
                 r.finish();
@@ -1180,7 +1181,7 @@ public class Agent {
                 if (!rendersReasoning()) {
                     return;
                 }
-                out().println(AnsiStyle.heading("🧠 思考过程"));
+                out().println(AnsiStyle.heading("思考过程"));
                 reasoningHeadingPrinted = true;
             }
         }

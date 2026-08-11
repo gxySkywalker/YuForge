@@ -84,7 +84,7 @@ public final class PlainRenderer implements Renderer {
     @Override
     public void appendDiff(String filePath, String before, String after) {
         out.println();
-        out.println(AnsiStyle.heading("📝 " + (filePath == null ? "(unnamed)" : filePath)));
+        out.println(AnsiStyle.heading(" " + (filePath == null ? "(unnamed)" : filePath)));
         if (before == null && after != null) {
             out.println(AnsiStyle.subtle("  (新建文件，" + after.length() + " 字符)"));
             return;
@@ -108,9 +108,9 @@ public final class PlainRenderer implements Renderer {
     public ApprovalResult promptApproval(ApprovalRequest request) {
         boolean sensitivePerCall = request.sensitiveNotice() != null && !request.sensitiveNotice().isBlank();
         out.println();
-        out.println("────────── ⚠️  HITL 审批请求 ──────────");
+        out.println("────────── [warn]  HITL 审批请求 ──────────");
         if (sensitivePerCall) {
-            out.println("⚠️  " + request.sensitiveNotice());
+            out.println("[warn]  " + request.sensitiveNotice());
         }
         out.println(request.toDisplayText());
 
@@ -170,7 +170,7 @@ public final class PlainRenderer implements Renderer {
                         return modified;
                     }
                 }
-                default -> out.println("  ❓ 无法识别的选项：'" + input + "'，请输入 y/a/n/s/m 之一（Enter 等价于 y）");
+                default -> out.println("  [invalid] 无法识别的选项：'" + input + "'，请输入 y/a/n/s/m 之一（Enter 等价于 y）");
             }
         }
         out.println("  [HITL] 连续多次无效输入，保守处理为拒绝");
@@ -183,7 +183,7 @@ public final class PlainRenderer implements Renderer {
             return -1;
         }
         out.println();
-        out.println(AnsiStyle.heading("📋 " + (title == null ? "请选择" : title)));
+        out.println(AnsiStyle.heading(" " + (title == null ? "请选择" : title)));
         for (int i = 0; i < items.size(); i++) {
             out.printf("  [%d] %s%n", i + 1, items.get(i));
         }
@@ -250,7 +250,7 @@ public final class PlainRenderer implements Renderer {
         try {
             JSON.readTree(trimmed);
         } catch (Exception e) {
-            out.println("  ❌ 修改后的参数不是合法 JSON：" + e.getMessage());
+            out.println("  [error] 修改后的参数不是合法 JSON：" + e.getMessage());
             return null;
         }
         return ApprovalResult.modify(trimmed);
@@ -260,25 +260,25 @@ public final class PlainRenderer implements Renderer {
 
     private static String toolLabel(String toolName, int count) {
         return switch (toolName) {
-            case "read_file" -> "📖 读取 " + count + " 个文件";
-            case "write_file" -> "✏️ 写入 " + count + " 个文件";
-            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
-            case "list_dir" -> "📂 列出 " + count + " 个目录";
-            case "execute_command" -> "⚡ 执行 " + count + " 条命令";
-            case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
-            case "list_background_processes" -> "🧭 查看后台服务";
-            case "read_background_process_log" -> "📜 查看服务日志";
-            case "inspect_background_process" -> "🩺 诊断后台服务";
-            case "wait_background_process_ready" -> "⏳ 等待服务就绪";
-            case "stop_background_process" -> "⏹️ 停止后台服务";
-            case "create_project" -> "🏗️ 创建 " + count + " 个项目";
-            case "search_code" -> "🔍 搜索代码 " + count + " 次";
-            case "web_search" -> "🌐 联网搜索 " + count + " 次";
-            case "web_fetch" -> "📰 抓取 " + count + " 个网页";
-            case "save_memory" -> "💾 保存长期记忆 " + count + " 条";
+            case "read_file" -> " 读取 " + count + " 个文件";
+            case "write_file" -> " 写入 " + count + " 个文件";
+            case "apply_patch" -> " 修改 " + count + " 个文件";
+            case "list_dir" -> " 列出 " + count + " 个目录";
+            case "execute_command" -> " 执行 " + count + " 条命令";
+            case "start_background_process" -> " 启动 " + count + " 个开发服务";
+            case "list_background_processes" -> " 查看后台服务";
+            case "read_background_process_log" -> " 查看服务日志";
+            case "inspect_background_process" -> " 诊断后台服务";
+            case "wait_background_process_ready" -> " 等待服务就绪";
+            case "stop_background_process" -> " 停止后台服务";
+            case "create_project" -> " 创建 " + count + " 个项目";
+            case "search_code" -> " 搜索代码 " + count + " 次";
+            case "web_search" -> " 联网搜索 " + count + " 次";
+            case "web_fetch" -> " 抓取 " + count + " 个网页";
+            case "save_memory" -> " 保存长期记忆 " + count + " 条";
             default -> toolName != null && toolName.startsWith("mcp__")
                     ? formatMcpLabel(toolName, count)
-                    : "🔧 " + toolName + " × " + count;
+                    : "Tool " + toolName + " × " + count;
         };
     }
 
@@ -286,8 +286,8 @@ public final class PlainRenderer implements Renderer {
         String[] parts = toolName.split("__", 3);
         String display = parts.length == 3 ? parts[1] + "." + parts[2] : toolName;
         return count == 1
-                ? "🔌 调用 MCP 工具 " + display
-                : "🔌 调用 MCP 工具 " + display + " × " + count;
+                ? " 调用 MCP 工具 " + display
+                : " 调用 MCP 工具 " + display + " × " + count;
     }
 
     private static String extractKeyParam(String toolName, String argsJson) {

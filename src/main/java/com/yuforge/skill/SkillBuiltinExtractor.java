@@ -75,7 +75,7 @@ public final class SkillBuiltinExtractor {
             String resourcePath = "skills/" + spec.name() + "/" + relative;
             try (InputStream in = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
                 if (in == null) {
-                    System.err.println("⚠️ 内置 skill 资源缺失: " + resourcePath);
+                    System.err.println("[warn] 内置 skill 资源缺失: " + resourcePath);
                     continue;
                 }
                 Path target = skillDir.resolve(relative);

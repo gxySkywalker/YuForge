@@ -25,16 +25,16 @@ final class ToolResultSummary {
         long elapsed = Math.max(0L, result.elapsedMillis());
         ToolResultDiagnostic diagnostic = result.diagnostic();
         if (result.timedOut() || diagnostic != null && diagnostic.code() == ToolResultDiagnostic.ErrorCode.TIMEOUT) {
-            return "⚠ " + action + "超时，已取消" + elapsed(elapsed);
+            return "[warn] " + action + "超时，已取消" + elapsed(elapsed);
         }
         if (diagnostic != null && diagnostic.code() == ToolResultDiagnostic.ErrorCode.INTERRUPTED) {
             return "⏹ " + action + "已取消" + elapsed(elapsed);
         }
         if (diagnostic != null && diagnostic.failed()) {
-            return "⚠ " + action + "失败 (" + diagnostic.code() + ")" + elapsed(elapsed)
+            return "[warn] " + action + "失败 (" + diagnostic.code() + ")" + elapsed(elapsed)
                     + compactSuggestion(diagnostic.suggestion());
         }
-        return "✓ " + action + "完成" + elapsed(elapsed);
+        return "[ok] " + action + "完成" + elapsed(elapsed);
     }
 
     private static String action(String name, String argumentsJson) {

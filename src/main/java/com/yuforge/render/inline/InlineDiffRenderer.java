@@ -37,7 +37,7 @@ public final class InlineDiffRenderer {
 
     public void render(String filePath, String before, String after) {
         out.println();
-        out.println(AnsiStyle.heading("📝 " + (filePath == null ? "(unnamed)" : filePath)));
+        out.println(AnsiStyle.heading(" " + (filePath == null ? "(unnamed)" : filePath)));
         if (before == null && after == null) {
             out.println(AnsiStyle.subtle("  (空 diff)"));
             return;

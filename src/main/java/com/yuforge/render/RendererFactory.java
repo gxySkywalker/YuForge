@@ -41,7 +41,7 @@ public final class RendererFactory {
         // 兼容旧 YUFORGE_TUI=true → lanterna
         String legacyTui = System.getenv("YUFORGE_TUI");
         if (legacyTui != null && Boolean.parseBoolean(legacyTui.trim())) {
-            System.err.println("⚠️ YUFORGE_TUI=true 已废弃，请改用 YUFORGE_RENDERER=lanterna");
+            System.err.println("[warn] YUFORGE_TUI=true 已废弃，请改用 YUFORGE_RENDERER=lanterna");
             return Mode.LANTERNA;
         }
         return Mode.INLINE;
@@ -53,7 +53,7 @@ public final class RendererFactory {
             case "plain" -> Mode.PLAIN;
             case "inline" -> Mode.INLINE;
             default -> {
-                System.err.println("⚠️ 未识别的 YUFORGE_RENDERER='" + raw + "'，回退到 inline");
+                System.err.println("[warn] 未识别的 YUFORGE_RENDERER='" + raw + "'，回退到 inline");
                 yield Mode.INLINE;
             }
         };
@@ -73,7 +73,7 @@ public final class RendererFactory {
                 if (TerminalCapabilities.supportsAnsi(terminal)) {
                     yield new InlineRenderer(terminal);
                 }
-                System.err.println("⚠️ 终端不支持 ANSI，inline 模式回退到 plain");
+                System.err.println("[warn] 终端不支持 ANSI，inline 模式回退到 plain");
                 yield new PlainRenderer();
             }
             case LANTERNA -> new PlainRenderer();    // Day 5 后替换为 LanternaRenderer

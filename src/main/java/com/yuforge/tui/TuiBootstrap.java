@@ -54,7 +54,7 @@ public final class TuiBootstrap {
         try (Terminal terminal = TerminalBuilder.builder().system(true).dumb(true).build()) {
             return shouldUseTui(terminal);
         } catch (IOException e) {
-            System.err.println("⚠️ 已显式启用 TUI，但终端检测失败，降级到 CLI 模式: " + e.getMessage());
+            System.err.println("[warn] 已显式启用 TUI，但终端检测失败，降级到 CLI 模式: " + e.getMessage());
             return false;
         }
     }
@@ -69,24 +69,24 @@ public final class TuiBootstrap {
         // 环境变量强制降级
         if (Boolean.parseBoolean(Objects.requireNonNullElse(
                 System.getenv("NO_TUI"), "false"))) {
-            System.out.println(AnsiStyle.heading("💡 提示: NO_TUI=true，已切换为 CLI 模式。"
+            System.out.println(AnsiStyle.heading("Tip: 提示: NO_TUI=true，已切换为 CLI 模式。"
                     + "要启用 TUI 请清除 NO_TUI 环境变量，并使用 YUFORGE_RENDERER=lanterna。"));
             return false;
         }
 
         // 终端尺寸检测
         if (terminal == null) {
-            System.out.println(AnsiStyle.heading("💡 提示: 当前运行环境没有可用系统终端，已切换为 CLI 模式。"));
+            System.out.println(AnsiStyle.heading("Tip: 提示: 当前运行环境没有可用系统终端，已切换为 CLI 模式。"));
             return false;
         }
         Size size = terminal.getSize();
         if (size == null || size.getColumns() <= 0 || size.getRows() <= 0) {
-            System.out.println(AnsiStyle.heading("💡 提示: 当前运行环境无法读取真实终端尺寸，已切换为 CLI 模式。"
+            System.out.println(AnsiStyle.heading("Tip: 提示: 当前运行环境无法读取真实终端尺寸，已切换为 CLI 模式。"
                     + "如需启用 TUI，请在 macOS Terminal / iTerm2 等真实终端中运行。"));
             return false;
         }
         if (size.getColumns() < MIN_COLS || size.getRows() < MIN_ROWS) {
-            System.out.println(AnsiStyle.heading("💡 提示: 终端尺寸过小（当前 " +
+            System.out.println(AnsiStyle.heading("Tip: 提示: 终端尺寸过小（当前 " +
                     size.getColumns() + "×" + size.getRows() +
                     "，最小需要 " + MIN_COLS + "×" + MIN_ROWS + "），已切换为 CLI 模式。" +
                     "如需启用 TUI，请调整窗口大小后重新运行。"));
@@ -135,7 +135,7 @@ public final class TuiBootstrap {
         Objects.requireNonNull(reactAgent);
         Objects.requireNonNull(hitlHandler);
 
-        System.out.println(AnsiStyle.section("🖥️  启动 TUI 界面..."));
+        System.out.println(AnsiStyle.section("  启动 TUI 界面..."));
 
         try {
             LanternaWindow window = new LanternaWindow(config, llmClient);
@@ -160,9 +160,9 @@ public final class TuiBootstrap {
             window.getRootPane().setMessageHandler(controller::submit);
             window.setCloseHook(controller::close);
             window.start();  // 阻塞直到用户退出
-            System.out.println("\n👋 再见!");
+            System.out.println("\n 再见!");
         } catch (Exception e) {
-            System.err.println("❌ TUI 启动失败，降级到 CLI 模式: " + e.getMessage());
+            System.err.println("[error] TUI 启动失败，降级到 CLI 模式: " + e.getMessage());
             e.printStackTrace();
             throw new IOException("TUI 启动失败", e);
         }

@@ -184,7 +184,7 @@ public class ContextCompressor {
             }
             return facts;
         } catch (IOException e) {
-            System.err.println("⚠️ 事实提取失败: " + e.getMessage());
+            System.err.println("[warn] 事实提取失败: " + e.getMessage());
             return List.of();
         }
     }
@@ -214,7 +214,7 @@ public class ContextCompressor {
                 LlmClient.ChatResponse response = llmClient.chat(messages, null);
                 summaries.add(response.content());
             } catch (IOException e) {
-                System.err.println("⚠️ 摘要生成失败: " + e.getMessage());
+                System.err.println("[warn] 摘要生成失败: " + e.getMessage());
                 // 降级：直接截取前 200 字
                 String fallback = chunkText.substring(0, Math.min(200, chunkText.length()));
                 summaries.add("[压缩] " + fallback);
@@ -240,7 +240,7 @@ public class ContextCompressor {
             LlmClient.ChatResponse response = llmClient.chat(messages, null);
             return response.content();
         } catch (IOException e) {
-            System.err.println("⚠️ 摘要合并失败: " + e.getMessage());
+            System.err.println("[warn] 摘要合并失败: " + e.getMessage());
             // 降级：直接拼接
             return String.join("；", summaries);
         }

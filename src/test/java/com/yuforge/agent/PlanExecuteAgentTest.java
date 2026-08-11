@@ -102,7 +102,7 @@ class PlanExecuteAgentTest {
 
         String result = agent.run("列出当前目录的文件");
 
-        assertEquals("⏹️ 已取消本次计划执行。", result);
+        assertEquals("[cancel] 已取消本次计划执行。", result);
         assertEquals(0, longTermMemory.size());
     }
 
@@ -128,7 +128,7 @@ class PlanExecuteAgentTest {
 
         String result = agent.run("列出当前目录的文件");
 
-        assertEquals("✅ 计划执行完成！", result);
+        assertEquals("[ok] 计划执行完成！", result);
     }
 
     @Test

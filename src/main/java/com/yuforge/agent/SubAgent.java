@@ -124,9 +124,9 @@ public class SubAgent {
             ConversationHistoryCompactor.ContextManagementResult result =
                     historyCompactor.manageIfNeeded(conversationHistory, trigger);
             if (result.compacted() && out != null) {
-                out.println("📦 [" + name + "] 上下文接近窗口上限，已把早期对话压缩为结构化检查点后继续。");
+                out.println("[context] [" + name + "] 上下文接近窗口上限，已把早期对话压缩为结构化检查点后继续。");
             } else if (result.archivedToolResults() > 0 && out != null) {
-                out.println("📦 [" + name + "] 已归档 " + result.archivedToolResults()
+                out.println("[context] [" + name + "] 已归档 " + result.archivedToolResults()
                         + " 个旧工具结果，可按 artifact_id 恢复。");
             }
         } catch (Exception e) {
@@ -446,25 +446,25 @@ public class SubAgent {
 
     private static String toolLabel(String toolName, int count) {
         return switch (toolName) {
-            case "read_file" -> "📖 读取 " + count + " 个文件";
+            case "read_file" -> " 读取 " + count + " 个文件";
             case "write_file" -> "写入 " + count + " 个文件";
-            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
-            case "list_dir" -> "📂 列出 " + count + " 个目录";
+            case "apply_patch" -> " 修改 " + count + " 个文件";
+            case "list_dir" -> " 列出 " + count + " 个目录";
             case "execute_command" -> "执行 " + count + " 条命令";
-            case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
-            case "list_background_processes" -> "🧭 查看后台服务";
-            case "read_background_process_log" -> "📜 查看服务日志";
-            case "inspect_background_process" -> "🩺 诊断后台服务";
+            case "start_background_process" -> " 启动 " + count + " 个开发服务";
+            case "list_background_processes" -> " 查看后台服务";
+            case "read_background_process_log" -> " 查看服务日志";
+            case "inspect_background_process" -> " 诊断后台服务";
             case "wait_background_process_ready" -> "等待服务就绪";
             case "stop_background_process" -> "停止后台服务";
             case "create_project" -> "创建 " + count + " 个项目";
             case "search_code" -> "搜索代码 " + count + " 次";
-            case "web_search" -> "🌐 联网搜索 " + count + " 次";
-            case "web_fetch" -> "📰 抓取 " + count + " 个网页";
-            case "save_memory" -> "💾 保存长期记忆 " + count + " 条";
+            case "web_search" -> " 联网搜索 " + count + " 次";
+            case "web_fetch" -> " 抓取 " + count + " 个网页";
+            case "save_memory" -> " 保存长期记忆 " + count + " 条";
             default -> toolName != null && toolName.startsWith("mcp__")
                     ? formatMcpLabel(toolName, count)
-                    : "🔧 " + toolName + " × " + count;
+                    : " " + toolName + " × " + count;
         };
     }
 
@@ -472,8 +472,8 @@ public class SubAgent {
         String[] parts = toolName.split("__", 3);
         String display = parts.length == 3 ? parts[1] + "." + parts[2] : toolName;
         return count == 1
-                ? "🔌 调用 MCP 工具 " + display
-                : "🔌 调用 MCP 工具 " + display + " × " + count;
+                ? " 调用 MCP 工具 " + display
+                : " 调用 MCP 工具 " + display + " × " + count;
     }
 
     private static String extractKeyParam(String toolName, String argsJson) {

@@ -42,7 +42,7 @@ public class CenterPane extends Panel {
         setLayoutManager(new LinearLayout(Direction.VERTICAL));
 
         // 对话流使用 TextBox（只读，支持滚动）
-        this.chatArea = new TextBox("对话开始...\n\n💡 提示：\n  - 在底部输入框输入问题\n  - Ctrl+O 折叠/展开代码块\n  - Ctrl+P 查看历史对话\n  - Ctrl+\\ 显示/隐藏文件树");
+        this.chatArea = new TextBox("对话开始...\n\nTip: 提示：\n  - 在底部输入框输入问题\n  - Ctrl+O 折叠/展开代码块\n  - Ctrl+P 查看历史对话\n  - Ctrl+\\ 显示/隐藏文件树");
         chatArea.setReadOnly(true);
 
         addComponent(chatArea.setLayoutData(
@@ -62,7 +62,7 @@ public class CenterPane extends Panel {
         if (message == null || message.isBlank()) {
             return;
         }
-        chatArea.setText(chatArea.getText() + "\n💡 系统:\n" + message.trim() + "\n");
+        chatArea.setText(chatArea.getText() + "\nTip: 系统:\n" + message.trim() + "\n");
         scrollToBottom();
     }
 
@@ -70,7 +70,7 @@ public class CenterPane extends Panel {
         if (output == null || output.isBlank()) {
             return;
         }
-        chatArea.setText(chatArea.getText() + "\n🤖 YuForge:\n" + output.trim() + "\n");
+        chatArea.setText(chatArea.getText() + "\nYuForge YuForge:\n" + output.trim() + "\n");
         scrollToBottom();
     }
 
@@ -79,7 +79,7 @@ public class CenterPane extends Panel {
      */
     private void appendUserMessage(String message) {
         String rendered = renderMarkdown(message);
-        chatArea.setText(chatArea.getText() + "\n👤 你:\n" + rendered + "\n");
+        chatArea.setText(chatArea.getText() + "\nUser 你:\n" + rendered + "\n");
         scrollToBottom();
     }
 
@@ -120,7 +120,7 @@ public class CenterPane extends Panel {
      * @param args     参数 JSON
      */
     public void appendToolCall(String toolName, String args) {
-        String toolBlock = "🔧 工具调用: " + (toolName != null ? toolName : "unknown") + "\n"
+        String toolBlock = "Tool 工具调用: " + (toolName != null ? toolName : "unknown") + "\n"
                 + (args != null ? "  参数: " + args : "")
                 + "\n";
         chatArea.setText(chatArea.getText() + "\n" + toolBlock);
@@ -134,7 +134,7 @@ public class CenterPane extends Panel {
      */
     public void appendToolResult(String result) {
         String truncated = truncateResult(result, 500);
-        String resultBlock = "📤 工具结果:\n" + truncated + "\n";
+        String resultBlock = "Result 工具结果:\n" + truncated + "\n";
         chatArea.setText(chatArea.getText() + resultBlock);
         scrollToBottom();
     }

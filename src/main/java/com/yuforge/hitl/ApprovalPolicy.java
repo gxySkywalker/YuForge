@@ -40,14 +40,14 @@ public class ApprovalPolicy {
      */
     public static String getDangerLevel(String toolName) {
         return switch (toolName) {
-            case "execute_command" -> "🔴 高危";
-            case "start_background_process" -> "🔴 高危";
-            case "stop_background_process" -> "🟡 中危";
-            case "revert_turn" -> "🔴 高危";
-            case "write_file" -> "🟡 中危";
-            case "apply_patch" -> "🟡 中危";
-            case "create_project" -> "🟡 中危";
-            default -> isMcpTool(toolName) ? "🟡 MCP" : "🟢 安全";
+            case "execute_command" -> "[high] 高危";
+            case "start_background_process" -> "[high] 高危";
+            case "stop_background_process" -> "[medium] 中危";
+            case "revert_turn" -> "[high] 高危";
+            case "write_file" -> "[medium] 中危";
+            case "apply_patch" -> "[medium] 中危";
+            case "create_project" -> "[medium] 中危";
+            default -> isMcpTool(toolName) ? "[medium] MCP" : "[safe] 安全";
         };
     }
 

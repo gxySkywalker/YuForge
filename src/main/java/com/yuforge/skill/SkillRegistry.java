@@ -103,7 +103,7 @@ public final class SkillRegistry {
             }
         } catch (IOException e) {
             warnings.add("扫描 skill 目录失败 " + dir + ": " + e.getMessage());
-            System.err.println("⚠️ 扫描 skill 目录失败 " + dir + ": " + e.getMessage());
+            System.err.println("[warn] 扫描 skill 目录失败 " + dir + ": " + e.getMessage());
         }
     }
 
@@ -113,14 +113,14 @@ public final class SkillRegistry {
             content = Files.readString(skillMd);
         } catch (IOException e) {
             warnings.add("读取 SKILL.md 失败 " + skillMd + ": " + e.getMessage());
-            System.err.println("⚠️ 读取 SKILL.md 失败 " + skillMd + ": " + e.getMessage());
+            System.err.println("[warn] 读取 SKILL.md 失败 " + skillMd + ": " + e.getMessage());
             return null;
         }
 
         SkillFrontmatterParser.ParseResult parsed = SkillFrontmatterParser.parse(content);
         for (String w : parsed.warnings()) {
             warnings.add(skillMd + ": " + w);
-            System.err.println("⚠️ Skill " + skillMd + " frontmatter: " + w);
+            System.err.println("[warn] Skill " + skillMd + " frontmatter: " + w);
         }
 
         Map<String, Object> fm = parsed.frontmatter();

@@ -84,7 +84,7 @@ public final class LanternaRenderer implements Renderer {
     @Override
     public void appendDiff(String filePath, String before, String after) {
         StringBuilder sb = new StringBuilder();
-        sb.append("📝 ").append(filePath == null ? "(unnamed)" : filePath).append("\n");
+        sb.append(" ").append(filePath == null ? "(unnamed)" : filePath).append("\n");
         if (before == null) {
             sb.append("(新建文件，").append(after == null ? 0 : after.length()).append(" 字符)");
         } else if (after == null) {
@@ -126,7 +126,7 @@ public final class LanternaRenderer implements Renderer {
     }
 
     private ApprovalResult doShowApprovalDialog(ApprovalRequest request) {
-        String title = "⚠️ HITL 审批: " + request.toolName();
+        String title = "[warn] HITL 审批: " + request.toolName();
         String body = request.toDisplayText() + "\n\n[Yes] 批准  [No] 拒绝  [Cancel] 跳过";
         MessageDialogButton button = new MessageDialogBuilder()
                 .setTitle(title)

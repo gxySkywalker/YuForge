@@ -16,7 +16,7 @@ class ApprovalPolicyTest {
     @Test
     void applyPatchRequiresApproval() {
         assertTrue(ApprovalPolicy.requiresApproval("apply_patch"));
-        assertEquals("🟡 中危", ApprovalPolicy.getDangerLevel("apply_patch"));
+        assertEquals("[medium] 中危", ApprovalPolicy.getDangerLevel("apply_patch"));
     }
 
     @Test
@@ -28,7 +28,7 @@ class ApprovalPolicyTest {
     void managedProcessMutatorsRequireApproval() {
         assertTrue(ApprovalPolicy.requiresApproval("start_background_process"));
         assertTrue(ApprovalPolicy.requiresApproval("stop_background_process"));
-        assertEquals("🔴 高危", ApprovalPolicy.getDangerLevel("start_background_process"));
+        assertEquals("[high] 高危", ApprovalPolicy.getDangerLevel("start_background_process"));
     }
 
     @Test
@@ -70,27 +70,27 @@ class ApprovalPolicyTest {
 
     @Test
     void executeCommandIsHighDanger() {
-        assertEquals("🔴 高危", ApprovalPolicy.getDangerLevel("execute_command"));
+        assertEquals("[high] 高危", ApprovalPolicy.getDangerLevel("execute_command"));
     }
 
     @Test
     void writeFileIsMediumDanger() {
-        assertEquals("🟡 中危", ApprovalPolicy.getDangerLevel("write_file"));
+        assertEquals("[medium] 中危", ApprovalPolicy.getDangerLevel("write_file"));
     }
 
     @Test
     void createProjectIsMediumDanger() {
-        assertEquals("🟡 中危", ApprovalPolicy.getDangerLevel("create_project"));
+        assertEquals("[medium] 中危", ApprovalPolicy.getDangerLevel("create_project"));
     }
 
     @Test
     void unknownToolIsSafe() {
-        assertEquals("🟢 安全", ApprovalPolicy.getDangerLevel("read_file"));
+        assertEquals("[safe] 安全", ApprovalPolicy.getDangerLevel("read_file"));
     }
 
     @Test
     void mcpToolHasMcpDangerLevel() {
-        assertEquals("🟡 MCP", ApprovalPolicy.getDangerLevel("mcp__demo__tool"));
+        assertEquals("[medium] MCP", ApprovalPolicy.getDangerLevel("mcp__demo__tool"));
         assertTrue(ApprovalPolicy.getRiskDescription("mcp__demo__tool").contains("MCP"));
     }
 

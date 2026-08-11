@@ -71,7 +71,7 @@ public final class LanternaWindow {
         try {
             gui.waitForWindowToClose(mainWindow);
         } catch (Exception e) {
-            System.err.println("❌ TUI 主循环异常: " + e.getMessage());
+            System.err.println("[error] TUI 主循环异常: " + e.getMessage());
         } finally {
             closeHook.run();
             tuiMode = false;
@@ -94,7 +94,7 @@ public final class LanternaWindow {
                 screen.stopScreen();
             }
         } catch (IOException e) {
-            System.err.println("⚠️ 关闭屏幕失败: " + e.getMessage());
+            System.err.println("[warn] 关闭屏幕失败: " + e.getMessage());
         }
     }
 

@@ -50,7 +50,7 @@ public final class SkillStateStore {
             }
             return result;
         } catch (Exception e) {
-            System.err.println("⚠️ skills.json 解析失败，忽略禁用列表: " + e.getMessage());
+            System.err.println("[warn] skills.json 解析失败，忽略禁用列表: " + e.getMessage());
             return Set.of();
         }
     }
@@ -74,7 +74,7 @@ public final class SkillStateStore {
             Files.createDirectories(file.getParent());
             Files.writeString(file, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(root));
         } catch (IOException e) {
-            System.err.println("⚠️ skills.json 写入失败: " + e.getMessage());
+            System.err.println("[warn] skills.json 写入失败: " + e.getMessage());
         }
     }
 }

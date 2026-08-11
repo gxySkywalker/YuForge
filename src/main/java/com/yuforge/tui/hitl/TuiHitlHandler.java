@@ -66,7 +66,7 @@ public class TuiHitlHandler implements HitlHandler {
             return ApprovalResult.approveAllByServer();
         }
 
-        String title = "⚠️  HITL 审批请求";
+        String title = "[warn]  HITL 审批请求";
         String content = request.toDisplayText()
                 + "\n\nYes: 批准本次  No: 拒绝  Cancel: 跳过";
 

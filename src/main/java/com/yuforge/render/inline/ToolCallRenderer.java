@@ -14,7 +14,7 @@ import java.util.Map;
 /**
  * 把一组工具调用渲染成 {@link FoldableBlock}。
  *
- * <p>折叠态：{@code ⏵ 读取 3 个文件 (ctrl+o to expand)}<br>
+ * <p>折叠态：{@code > 读取 3 个文件 (ctrl+o to expand)}<br>
  * 展开态：原 PlainRenderer 风格的工具标签 + 缩进的关键参数 + 折叠提示。
  *
  * <p>每次调用产生一个 block 并立即渲染折叠态，注册到 {@link BlockRegistry}。
@@ -56,11 +56,11 @@ public final class ToolCallRenderer {
         if (grouped.size() == 1) {
             var entry = grouped.entrySet().iterator().next();
             String label = toolCollapsedLabel(entry.getKey(), entry.getValue());
-            return AnsiStyle.subtle("⏵ " + phase(entry.getKey()) + " · "
+            return AnsiStyle.subtle("> " + phase(entry.getKey()) + " · "
                     + stripPrefixIcon(label) + " (ctrl+o to expand)");
         }
         int totalCalls = grouped.values().stream().mapToInt(List::size).sum();
-        return AnsiStyle.subtle("⏵ " + grouped.size() + " 组工具调用 / "
+        return AnsiStyle.subtle("> " + grouped.size() + " 组工具调用 / "
                 + totalCalls + " 次 (ctrl+o to expand)");
     }
 
@@ -80,44 +80,35 @@ public final class ToolCallRenderer {
         return lines;
     }
 
-    /** 移除 emoji 前缀（折叠态视觉更紧凑），如 "📖 读取 3 个文件" → "读取 3 个文件"。 */
+    /** 清理标签前导空白，保持折叠态紧凑。 */
     private static String stripPrefixIcon(String label) {
         if (label == null || label.isEmpty()) {
             return "";
         }
-        int firstSpace = label.indexOf(' ');
-        if (firstSpace < 0) {
-            return label;
-        }
-        // 仅当第一个 token 是 emoji（高 Unicode）时才剥离
-        int cp = label.codePointAt(0);
-        if (cp >= 0x2600 && cp <= 0x1FAFF) {
-            return label.substring(firstSpace + 1);
-        }
-        return label;
+        return label.stripLeading();
     }
 
     static String toolLabel(String toolName, int count) {
         return switch (toolName) {
-            case "read_file" -> "📖 读取 " + count + " 个文件";
-            case "write_file" -> "✏️ 写入 " + count + " 个文件";
-            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
-            case "list_dir" -> "📂 列出 " + count + " 个目录";
-            case "execute_command" -> "⚡ 执行 " + count + " 条命令";
-            case "start_background_process" -> "▶ 启动 " + count + " 个开发服务";
-            case "list_background_processes" -> "◌ 查看 " + count + " 次后台服务";
-            case "read_background_process_log" -> "▤ 读取 " + count + " 份服务日志";
-            case "inspect_background_process" -> "⌕ 检查 " + count + " 个开发服务";
-            case "wait_background_process_ready" -> "◷ 等待 " + count + " 个服务就绪";
-            case "stop_background_process" -> "■ 停止 " + count + " 个开发服务";
-            case "create_project" -> "🏗️ 创建 " + count + " 个项目";
-            case "search_code" -> "🔍 搜索代码 " + count + " 次";
-            case "web_search" -> "🌐 联网搜索 " + count + " 次";
-            case "web_fetch" -> "📰 抓取 " + count + " 个网页";
-            case "save_memory" -> "💾 保存长期记忆 " + count + " 条";
+            case "read_file" -> "读取 " + count + " 个文件";
+            case "write_file" -> "写入 " + count + " 个文件";
+            case "apply_patch" -> "修改 " + count + " 个文件";
+            case "list_dir" -> "列出 " + count + " 个目录";
+            case "execute_command" -> "执行 " + count + " 条命令";
+            case "start_background_process" -> "启动 " + count + " 个开发服务";
+            case "list_background_processes" -> "查看 " + count + " 次后台服务";
+            case "read_background_process_log" -> "读取 " + count + " 份服务日志";
+            case "inspect_background_process" -> "检查 " + count + " 个开发服务";
+            case "wait_background_process_ready" -> "等待 " + count + " 个服务就绪";
+            case "stop_background_process" -> "停止 " + count + " 个开发服务";
+            case "create_project" -> "创建 " + count + " 个项目";
+            case "search_code" -> "搜索代码 " + count + " 次";
+            case "web_search" -> "联网搜索 " + count + " 次";
+            case "web_fetch" -> "抓取 " + count + " 个网页";
+            case "save_memory" -> "保存长期记忆 " + count + " 条";
             default -> toolName != null && toolName.startsWith("mcp__")
                     ? formatMcpLabel(toolName, count)
-                    : "🔧 " + toolName + " × " + count;
+                    : toolName + " x " + count;
         };
     }
 
@@ -132,13 +123,13 @@ public final class ToolCallRenderer {
             return label;
         }
         return switch (toolName) {
-            case "web_search" -> "🌐 WebSearch(\"" + detail + "\")";
-            case "web_fetch" -> "📰 WebFetch(" + compactUrl(detail) + ")";
-            case "search_code" -> "🔍 SearchCode(\"" + detail + "\")";
-            case "read_file" -> "📖 ReadFile(" + detail + ")";
-            case "list_dir" -> "📂 ListDir(" + detail + ")";
-            case "execute_command" -> "⚡ Shell(" + detail + ")";
-            case "start_background_process" -> "▶ Run(" + detail + ")";
+            case "web_search" -> " WebSearch(\"" + detail + "\")";
+            case "web_fetch" -> " WebFetch(" + compactUrl(detail) + ")";
+            case "search_code" -> " SearchCode(\"" + detail + "\")";
+            case "read_file" -> " ReadFile(" + detail + ")";
+            case "list_dir" -> " ListDir(" + detail + ")";
+            case "execute_command" -> " Shell(" + detail + ")";
+            case "start_background_process" -> "Run(" + detail + ")";
             case "inspect_background_process", "wait_background_process_ready",
                     "read_background_process_log", "stop_background_process" -> label + " · " + detail;
             default -> label + " · " + detail;
@@ -160,8 +151,8 @@ public final class ToolCallRenderer {
         String[] parts = toolName.split("__", 3);
         String display = parts.length == 3 ? parts[1] + "." + parts[2] : toolName;
         return count == 1
-                ? "🔌 调用 MCP 工具 " + display
-                : "🔌 调用 MCP 工具 " + display + " × " + count;
+                ? "调用 MCP 工具 " + display
+                : "调用 MCP 工具 " + display + " x " + count;
     }
 
     static String extractKeyParam(String toolName, String argsJson) {

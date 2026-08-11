@@ -72,7 +72,7 @@ public class SnapshotService implements AutoCloseable {
         try {
             return manager.preTurnSnapshot(turnId, summary) != null;
         } catch (Exception e) {
-            System.err.println("⚠️ pre-turn 快照失败: " + e.getMessage());
+            System.err.println("[warn] pre-turn 快照失败: " + e.getMessage());
             return false;
         }
     }
@@ -85,7 +85,7 @@ public class SnapshotService implements AutoCloseable {
             try {
                 manager.postTurnSnapshot(turnId, summary);
             } catch (Exception e) {
-                System.err.println("⚠️ post-turn 快照失败: " + e.getMessage());
+                System.err.println("[warn] post-turn 快照失败: " + e.getMessage());
             }
         });
     }

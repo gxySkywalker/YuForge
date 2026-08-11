@@ -32,7 +32,7 @@ public final class SkillIndexFormatter {
                     .sorted((a, b) -> a.name().compareTo(b.name()))
                     .limit(MAX_ENABLED_SKILLS)
                     .toList();
-            System.err.println("⚠️ 已检测到 " + enabled.size()
+            System.err.println("[warn] 已检测到 " + enabled.size()
                     + " 个 skill，仅前 " + MAX_ENABLED_SKILLS + " 个进入 system prompt 索引");
         }
 
@@ -51,7 +51,7 @@ public final class SkillIndexFormatter {
 
         if (sb.length() > MAX_INDEX_BYTES) {
             String truncated = sb.substring(0, MAX_INDEX_BYTES) + "\n...(skill 索引段被截断)\n";
-            System.err.println("⚠️ skill 索引段超过 " + MAX_INDEX_BYTES + " 字符，已截断");
+            System.err.println("[warn] skill 索引段超过 " + MAX_INDEX_BYTES + " 字符，已截断");
             return truncated;
         }
         return sb.toString();

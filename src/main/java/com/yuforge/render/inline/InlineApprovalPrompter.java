@@ -42,7 +42,7 @@ public final class InlineApprovalPrompter {
     public ApprovalResult prompt(ApprovalRequest request) {
         boolean sensitive = request.sensitiveNotice() != null && !request.sensitiveNotice().isBlank();
         out.println();
-        out.println(AnsiStyle.heading("⚠️  HITL 审批"));
+        out.println(AnsiStyle.heading("[warn]  HITL 审批"));
         if (sensitive) {
             out.println("  " + request.sensitiveNotice());
         }
@@ -122,7 +122,7 @@ public final class InlineApprovalPrompter {
         try {
             JSON.readTree(trimmed);
         } catch (Exception e) {
-            out.println(AnsiStyle.subtle("  ❌ 非法 JSON: " + e.getMessage()));
+            out.println(AnsiStyle.subtle("  [error] 非法 JSON: " + e.getMessage()));
             return null;
         }
         return ApprovalResult.modify(trimmed);

@@ -221,9 +221,9 @@ public class PlanExecuteAgent {
             ConversationHistoryCompactor.ContextManagementResult result =
                     historyCompactor.manageIfNeeded(messages, trigger);
             if (result.compacted() && out != null) {
-                out.println("📦 上下文接近窗口上限，已把早期对话压缩为结构化检查点后继续。");
+                out.println("[context] 上下文接近窗口上限，已把早期对话压缩为结构化检查点后继续。");
             } else if (result.archivedToolResults() > 0 && out != null) {
-                out.println("📦 已归档 " + result.archivedToolResults() + " 个旧工具结果，可按 artifact_id 恢复。");
+                out.println("[context] 已归档 " + result.archivedToolResults() + " 个旧工具结果，可按 artifact_id 恢复。");
             }
         } catch (Exception e) {
             log.warn("conversationHistory compaction failed", e);
@@ -259,7 +259,7 @@ public class PlanExecuteAgent {
         StreamState streamState = new StreamState();
         try {
             if (CancellationContext.isCancelled()) {
-                return "⏹️ 已取消当前计划执行。";
+                return "[cancel] 已取消当前计划执行。";
             }
             PlanRunOutcome outcome = runWithPlan(userInput, streamState);
             if (outcome.persistAssistantMessage() && outcome.result() != null && !outcome.result().isBlank()) {
@@ -271,7 +271,7 @@ public class PlanExecuteAgent {
             return outcome.result();
         } catch (Exception e) {
             log.error("Plan run failed", e);
-            String errorMessage = "❌ 执行失败: " + e.getMessage();
+            String errorMessage = "[error] 执行失败: " + e.getMessage();
             memoryManager.addAssistantMessage(errorMessage);
             return errorMessage;
         }
@@ -293,7 +293,7 @@ public class PlanExecuteAgent {
             }
 
             if (decision.action() == PlanReviewAction.CANCEL) {
-                return PlanRunOutcome.canceled("⏹️ 已取消本次计划执行。");
+                return PlanRunOutcome.canceled("[cancel] 已取消本次计划执行。");
             }
 
             String feedback = decision.feedback() == null ? "" : decision.feedback().trim();
@@ -301,14 +301,14 @@ public class PlanExecuteAgent {
                 return PlanRunOutcome.executed(executePlan(plan, streamState));
             }
 
-            out.println("📝 已收到补充要求，正在重新规划...\n");
+            out.println("[plan] 已收到补充要求，正在重新规划...\n");
             plan = planner.createPlan(plan.getGoal() + "\n补充要求：" + feedback);
         }
     }
 
     private String executePlan(ExecutionPlan plan, StreamState streamState) throws IOException {
         log.info("Executing plan: goal='{}', taskCount={}", plan.getGoal(), plan.getAllTasks().size());
-        out.println("🚀 开始执行计划...\n");
+        out.println("[plan] 开始执行计划...\n");
 
         plan.markStarted();
         StringBuilder finalResult = new StringBuilder();
@@ -316,7 +316,7 @@ public class PlanExecuteAgent {
 
         while (true) {
             if (CancellationContext.isCancelled()) {
-                return "⏹️ 已取消当前计划执行。";
+                return "[cancel] 已取消当前计划执行。";
             }
             List<Task> executableTasks = getExecutableTasksInOrder(plan);
             if (executableTasks.isEmpty()) {
@@ -329,7 +329,7 @@ public class PlanExecuteAgent {
 
                 if (batchResult.userRejected()) {
                     log.info("Plan stopped by user rejection in task {}", task.getId());
-                    return "⏹️ 已按你的决定停止当前计划：" + batchResult.result();
+                    return "[cancel] 已按你的决定停止当前计划：" + batchResult.result();
                 }
 
                 if (!batchResult.failed()) {
@@ -338,9 +338,9 @@ public class PlanExecuteAgent {
                     log.info("Task completed: {} status={} resultChars={}",
                             task.getId(), task.getStatus(), batchResult.result() == null ? 0 : batchResult.result().length());
                     if (batchResult.streamedOutput() || batchResult.result() == null || batchResult.result().isBlank()) {
-                        out.println("✅ 完成 [" + task.getId() + "]\n");
+                        out.println("[ok] 完成 [" + task.getId() + "]\n");
                     } else {
-                        out.println("✅ 完成 [" + task.getId() + "]: "
+                        out.println("[ok] 完成 [" + task.getId() + "]: "
                                 + batchResult.result().substring(0, Math.min(100, batchResult.result().length())) + "\n");
                     }
                     continue;
@@ -349,10 +349,10 @@ public class PlanExecuteAgent {
                 Exception error = batchResult.error();
                 task.markFailed(error.getMessage());
                 log.warn("Task failed: {} error={}", task.getId(), error.getMessage());
-                out.println("❌ 失败 [" + task.getId() + "]: " + error.getMessage() + "\n");
+                out.println("[error] 失败 [" + task.getId() + "]: " + error.getMessage() + "\n");
 
                 if (plan.getProgress() < 0.5) {
-                    out.println("🔄 尝试重新规划...\n");
+                    out.println("[plan] 尝试重新规划...\n");
                     ExecutionPlan replanned = planner.replan(plan, error.getMessage());
                     return reviewAndExecutePlan(replanned, streamState).result();
                 }
@@ -366,7 +366,7 @@ public class PlanExecuteAgent {
 
         if (!plan.isAllCompleted() && !plan.hasFailed()) {
             plan.markFailed();
-            return "⚠️ 计划未能继续推进，存在未满足依赖的任务。";
+            return "[warn] 计划未能继续推进，存在未满足依赖的任务。";
         }
 
         String planSummary = finalResult.isEmpty()
@@ -376,16 +376,16 @@ public class PlanExecuteAgent {
         if (plan.hasFailed()) {
             plan.markFailed();
             if (planSummary.isBlank()) {
-                return "⚠️ 计划部分完成，有任务失败。";
+                return "[warn] 计划部分完成，有任务失败。";
             }
-            return "⚠️ 计划部分完成，有任务失败。\n" + planSummary;
+            return "[warn] 计划部分完成，有任务失败。\n" + planSummary;
         }
 
         plan.markCompleted();
         if (planSummary.isBlank()) {
-            return "✅ 计划执行完成！";
+            return "[ok] 计划执行完成！";
         }
-        return "✅ 计划执行完成！\n" + planSummary;
+        return "[ok] 计划执行完成！\n" + planSummary;
     }
 
     private List<Task> getExecutableTasksInOrder(ExecutionPlan plan) {
@@ -404,7 +404,7 @@ public class PlanExecuteAgent {
         if (executableTasks.size() == 1) {
             Task task = executableTasks.get(0);
             log.info("Executing single task: {} type={}", task.getId(), task.getType());
-            out.println("▶️ 执行任务 [" + task.getId() + "]: " + task.getDescription());
+            out.println("> 执行任务 [" + task.getId() + "]: " + task.getDescription());
             task.markStarted();
 
             try {
@@ -418,7 +418,7 @@ public class PlanExecuteAgent {
                 .map(Task::getId)
                 .collect(Collectors.joining(", "));
         log.info("Executing parallel batch: {}", parallelTaskIds);
-        out.println("⚡ 本轮并行执行 " + executableTasks.size() + " 个任务: " + parallelTaskIds);
+        out.println("[plan] 本轮并行执行 " + executableTasks.size() + " 个任务: " + parallelTaskIds);
 
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(executableTasks.size(), 4), r -> {
             Thread t = new Thread(r, "yuforge-plan-executor");
@@ -429,7 +429,7 @@ public class PlanExecuteAgent {
             Map<String, ByteArrayOutputStream> buffers = new LinkedHashMap<>();
             List<Future<TaskExecutionResult>> futures = new ArrayList<>();
             for (Task task : executableTasks) {
-                out.println("▶️ 并行任务 [" + task.getId() + "]: " + task.getDescription());
+                out.println("> 并行任务 [" + task.getId() + "]: " + task.getDescription());
                 task.markStarted();
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 buffers.put(task.getId(), baos);
@@ -521,7 +521,7 @@ public class PlanExecuteAgent {
         while (iteration < MAX_TASK_ITERATIONS) {
             if (CancellationContext.isCancelled()) {
                 streamRenderer.finish();
-                return TaskRunResult.of("⏹️ 已取消任务 [" + task.getId() + "]。", streamRenderer.hasStreamedOutput());
+                return TaskRunResult.of(" 已取消任务 [" + task.getId() + "]。", streamRenderer.hasStreamedOutput());
             }
             iteration++;
 
@@ -541,7 +541,7 @@ public class PlanExecuteAgent {
                     response.reasoningContent());
             if (CancellationContext.isCancelled()) {
                 streamRenderer.finish();
-                return TaskRunResult.of("⏹️ 已取消任务 [" + task.getId() + "]。", streamRenderer.hasStreamedOutput());
+                return TaskRunResult.of(" 已取消任务 [" + task.getId() + "]。", streamRenderer.hasStreamedOutput());
             }
 
             totalInputTokens += response.inputTokens();
@@ -581,7 +581,7 @@ public class PlanExecuteAgent {
             ));
 
             // 在工具执行前 flush 并重置流式渲染器：避免 Markdown renderer pending 文本
-            // 被 HITL 提示"跨过"导致 🧠 / 🤖 标题与内容错位
+            // 被 HITL 提示"跨过"导致  /  标题与内容错位
             streamRenderer.resetBetweenIterations();
 
             List<ToolExecutionResult> toolResults = executeToolCalls(task.getId(), response.toolCalls(), out);
@@ -734,25 +734,25 @@ public class PlanExecuteAgent {
 
     private static String toolLabel(String toolName, int count) {
         return switch (toolName) {
-            case "read_file" -> "📖 读取 " + count + " 个文件";
-            case "write_file" -> "✏️ 写入 " + count + " 个文件";
-            case "apply_patch" -> "🩹 修改 " + count + " 个文件";
-            case "list_dir" -> "📂 列出 " + count + " 个目录";
-            case "execute_command" -> "⚡ 执行 " + count + " 条命令";
-            case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
-            case "list_background_processes" -> "🧭 查看后台服务";
-            case "read_background_process_log" -> "📜 查看服务日志";
-            case "inspect_background_process" -> "🩺 诊断后台服务";
-            case "wait_background_process_ready" -> "⏳ 等待服务就绪";
-            case "stop_background_process" -> "⏹️ 停止后台服务";
-            case "create_project" -> "🏗️ 创建 " + count + " 个项目";
-            case "search_code" -> "🔍 搜索代码 " + count + " 次";
-            case "web_search" -> "🌐 联网搜索 " + count + " 次";
-            case "web_fetch" -> "📰 抓取 " + count + " 个网页";
-            case "save_memory" -> "💾 保存长期记忆 " + count + " 条";
+            case "read_file" -> " 读取 " + count + " 个文件";
+            case "write_file" -> " 写入 " + count + " 个文件";
+            case "apply_patch" -> " 修改 " + count + " 个文件";
+            case "list_dir" -> " 列出 " + count + " 个目录";
+            case "execute_command" -> " 执行 " + count + " 条命令";
+            case "start_background_process" -> " 启动 " + count + " 个开发服务";
+            case "list_background_processes" -> " 查看后台服务";
+            case "read_background_process_log" -> " 查看服务日志";
+            case "inspect_background_process" -> " 诊断后台服务";
+            case "wait_background_process_ready" -> " 等待服务就绪";
+            case "stop_background_process" -> " 停止后台服务";
+            case "create_project" -> " 创建 " + count + " 个项目";
+            case "search_code" -> " 搜索代码 " + count + " 次";
+            case "web_search" -> " 联网搜索 " + count + " 次";
+            case "web_fetch" -> " 抓取 " + count + " 个网页";
+            case "save_memory" -> " 保存长期记忆 " + count + " 条";
             default -> toolName != null && toolName.startsWith("mcp__")
                     ? formatMcpLabel(toolName, count)
-                    : "🔧 " + toolName + " × " + count;
+                    : " " + toolName + " × " + count;
         };
     }
 
@@ -760,8 +760,8 @@ public class PlanExecuteAgent {
         String[] parts = toolName.split("__", 3);
         String display = parts.length == 3 ? parts[1] + "." + parts[2] : toolName;
         return count == 1
-                ? "🔌 调用 MCP 工具 " + display
-                : "🔌 调用 MCP 工具 " + display + " × " + count;
+                ? " 调用 MCP 工具 " + display
+                : " 调用 MCP 工具 " + display + " × " + count;
     }
 
     private static String extractKeyParam(String toolName, String argsJson) {
@@ -848,7 +848,7 @@ public class PlanExecuteAgent {
                 if (pendingReasoning.toString().isBlank()) {
                     return;
                 }
-                out.println(AnsiStyle.heading("🧠 任务思考 [" + taskId + "]"));
+                out.println(AnsiStyle.heading(" 任务思考 [" + taskId + "]"));
                 reasoningRenderer = new TerminalMarkdownRenderer(out);
                 reasoningRenderer.append(pendingReasoning.toString());
                 pendingReasoning.setLength(0);
@@ -872,7 +872,7 @@ public class PlanExecuteAgent {
                     reasoningRenderer.finish();
                     out.println();
                 } else if (pendingReasoning.length() > 0 && !pendingReasoning.toString().isBlank()) {
-                    out.println(AnsiStyle.heading("🧠 任务思考 [" + taskId + "]"));
+                    out.println(AnsiStyle.heading(" 任务思考 [" + taskId + "]"));
                     TerminalMarkdownRenderer r = new TerminalMarkdownRenderer(out);
                     r.append(pendingReasoning.toString());
                     r.finish();
@@ -881,7 +881,7 @@ public class PlanExecuteAgent {
                     reasoningStarted = true;
                 }
                 // content 可能只是 tool-call 前的叙述，也可能是最终回答，用"输出"避免误导。
-                out.println(AnsiStyle.section("🤖 任务输出 [" + taskId + "]"));
+                out.println(AnsiStyle.section(" 任务输出 [" + taskId + "]"));
                 contentRenderer = new TerminalMarkdownRenderer(out);
                 contentStarted = true;
                 streamedOutput = true;
@@ -907,7 +907,7 @@ public class PlanExecuteAgent {
 
         /**
          * 两次 iteration 之间（通常是一次 tool-call 分支完成后）调用：收尾当前渲染器并重置状态，
-         * 让下一轮迭代能重新打印 🧠 / 🤖 标题，避免标题和内容被 HITL / 工具执行中断而错位。
+         * 让下一轮迭代能重新打印  /  标题，避免标题和内容被 HITL / 工具执行中断而错位。
          */
         private synchronized void resetBetweenIterations() {
             endThinking();
@@ -943,7 +943,7 @@ public class PlanExecuteAgent {
                 return;
             }
             out.println();
-            out.println(AnsiStyle.heading("🧠 补充思考 [" + taskId + "]"));
+            out.println(AnsiStyle.heading(" 补充思考 [" + taskId + "]"));
             TerminalMarkdownRenderer renderer = new TerminalMarkdownRenderer(out);
             renderer.append(late);
             renderer.finish();

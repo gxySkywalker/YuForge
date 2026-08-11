@@ -82,9 +82,9 @@ public class TerminalHitlHandler implements HitlHandler {
 
         // 显著的视觉分隔符，避免审批框被误认为属于上游的"回复"区
         out.println();
-        out.println("────────── ⚠️  HITL 审批请求 ──────────");
+        out.println("────────── [warn]  HITL 审批请求 ──────────");
         if (sensitivePerCall) {
-            out.println("⚠️  " + request.sensitiveNotice());
+            out.println("[warn]  " + request.sensitiveNotice());
         }
         out.println(request.toDisplayText());
 
@@ -155,7 +155,7 @@ public class TerminalHitlHandler implements HitlHandler {
                     }
                     // 修改失败（JSON 非法等）时回到主菜单重新提示
                 }
-                default -> out.println("  ❓ 无法识别的选项：'" + input + "'，请输入 y/a/n/s/m 之一（Enter 等价于 y）");
+                default -> out.println("  [invalid] 无法识别的选项：'" + input + "'，请输入 y/a/n/s/m 之一（Enter 等价于 y）");
             }
         }
         out.println("  [HITL] 连续多次无效输入，保守处理为拒绝");
@@ -224,7 +224,7 @@ public class TerminalHitlHandler implements HitlHandler {
         try {
             MAPPER.readTree(trimmed);
         } catch (Exception e) {
-            out.println("  ❌ 修改后的参数不是合法 JSON：" + e.getMessage());
+            out.println("  [error] 修改后的参数不是合法 JSON：" + e.getMessage());
             return null;  // 回到主菜单
         }
         return ApprovalResult.modify(trimmed);

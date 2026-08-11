@@ -124,6 +124,7 @@ src/main/java/com/yuforge/
 - 启动期 MCP 不得阻塞首屏：Banner/composer 完成首帧后才在后台初始化，未完成 server 保持 `STARTING`；`/mcp` 查看最新状态。单个后台启动周期仍受 `YUFORGE_MCP_STARTUP_WAIT_SECONDS` / `-Dyuforge.mcp.startup.wait.seconds`（默认 8 秒）约束，超时后连接线程继续完成。
 - `LineReader` 使用 `YuForgeHighlighter` 做输入实时高亮：slash 命令、`@` 引用、`@image:`、`@clipboard`、敏感词和明显危险 shell 片段会在编辑阶段被标记；不要把这类视觉提示混入最终提交文本。
 - `LineReader` 使用 `YuForgeCompleter` 做上下文补全：单独输入 `/` 时由 JLine 自己展示不超过 8 个高频命令及说明（`/model`、`/plan`、`/team`、`/init` 等），继续输入后按前缀筛选；其他时刻不自动弹出 completion menu，用户可用 Tab 补全。候选浮层不得写入 transcript 或依赖相对光标回退。`/model` provider、`/mcp` 子命令与 server、`/skill` 子命令与 skill name、`/task` / `/browser` / `/snapshot` 子命令、`@image:` 本地路径、本地 `@path` 和 MCP resource `@server:uri` 引用都应从同一个 completer 出口维护。
+- 裸 `System.out/System.err`、plain/TUI fallback、HITL/palette 等绕过 inline sanitizer 的终端路径禁止使用 emoji/Dingbat；状态使用 `[ok]`、`[warn]`、`[error]`、`[high]` 等 ASCII 标签，palette 选中项使用 `>`。`TerminalOutputSafetyTest` 固化该边界。
 - 普通用户输入进入 Agent 前会先展开 MCP resource mention，再由 `LocalPathMentionExpander` 展开本地 `@path`：文件会内联为 `<file>` 块，目录会内联为 `<directory>` 列表；绝对路径或符号链接逃逸项目根时保持原文不展开。
 - `LineReader` 使用 `YuForgeHistory` 持久化输入历史到 `~/.yuforge/history/input.history`；如果 `yuforge.history.file` / `YUFORGE_HISTORY_FILE` 指向目录，也会自动使用该目录下的 `input.history`，避免把目录当文件读；默认忽略空白、重复、明显密钥/Bearer、base64 图片和超长输入，用户可用 `/history clear` 清空本机输入历史。
 - 启动期会加载 `~/.yuforge/YUFORGE.md`、项目根 `YUFORGE.md`、项目根 `.yuforge/YUFORGE.md`、`YUFORGE.local.md`、`.yuforge/YUFORGE.local.md`，按此顺序注入 Project Context；`@relative/path.md` 可导入项目根内文件，总注入内容有字符预算，避免项目记忆变成 token 噪音。

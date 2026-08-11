@@ -40,7 +40,7 @@ class PlainRendererTest {
                 new LlmClient.ToolCall.Function("read_file", "{\"path\":\"README.md\"}"));
         renderer.appendToolCalls(List.of(call));
         String text = sink.toString(StandardCharsets.UTF_8);
-        assertTrue(text.contains("📖 读取 1 个文件"), text);
+        assertTrue(text.contains("读取 1 个文件"), text);
         assertTrue(text.contains("README.md"), text);
     }
 
@@ -54,7 +54,7 @@ class PlainRendererTest {
                 "tc-2",
                 new LlmClient.ToolCall.Function("custom_tool", "{}"));
         renderer.appendToolCalls(List.of(call));
-        assertTrue(sink.toString(StandardCharsets.UTF_8).contains("🔧 custom_tool × 1"));
+        assertTrue(sink.toString(StandardCharsets.UTF_8).contains("custom_tool × 1"));
     }
 
     @Test
@@ -68,7 +68,7 @@ class PlainRendererTest {
                 new LlmClient.ToolCall.Function("mcp__chrome-devtools__navigate_page", "{}"));
         renderer.appendToolCalls(List.of(call));
         String text = sink.toString(StandardCharsets.UTF_8);
-        assertTrue(text.contains("🔌 调用 MCP 工具 chrome-devtools.navigate_page"), text);
+        assertTrue(text.contains("调用 MCP 工具 chrome-devtools.navigate_page"), text);
     }
 
     @Test

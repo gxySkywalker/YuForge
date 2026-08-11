@@ -59,7 +59,7 @@ public record ApprovalRequest(
         StringBuilder sb = new StringBuilder();
         String border = "─".repeat(BOX_INNER_WIDTH);
         sb.append("┌").append(border).append("┐\n");
-        sb.append(formatBoxLine("⚠️  需要审批")).append("\n");
+        sb.append(formatBoxLine("[warn]  需要审批")).append("\n");
         sb.append("├").append(border).append("┤\n");
         sb.append(formatBoxField("工具", toolName)).append("\n");
         String mcpServer = ApprovalPolicy.mcpServerName(toolName);

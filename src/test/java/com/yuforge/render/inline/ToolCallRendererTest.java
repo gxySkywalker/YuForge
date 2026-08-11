@@ -20,7 +20,7 @@ class ToolCallRendererTest {
                 tc("read_file", "{\"path\":\"a.md\"}"),
                 tc("read_file", "{\"path\":\"b.md\"}")));
         String header = ToolCallRenderer.collapsedHeader(grouped);
-        assertTrue(header.contains("⏵"), header);
+        assertTrue(header.contains(">"), header);
         assertTrue(header.contains("探索"), header);
         assertTrue(header.contains("读取 2 个文件"), header);
         assertTrue(header.contains("ctrl+o"), header);
@@ -44,7 +44,7 @@ class ToolCallRendererTest {
         var ready = ToolCallRenderer.group(List.of(
                 tc("wait_background_process_ready", "{\"process_id\":\"service-42\"}")));
 
-        assertTrue(ToolCallRenderer.collapsedHeader(run).contains("运行 · ▶ Run(mvn spring-boot:run)"));
+        assertTrue(ToolCallRenderer.collapsedHeader(run).contains("运行 · Run(mvn spring-boot:run)"));
         assertTrue(ToolCallRenderer.collapsedHeader(ready).contains("验证"));
         assertTrue(ToolCallRenderer.collapsedHeader(ready).contains("service-42"));
     }
@@ -75,7 +75,7 @@ class ToolCallRendererTest {
         var grouped = ToolCallRenderer.group(List.of(
                 tc("read_file", "{\"path\":\"README.md\"}")));
         List<String> lines = ToolCallRenderer.expandedLines(grouped);
-        assertTrue(lines.stream().anyMatch(l -> l.contains("📖 读取 1 个文件")), lines.toString());
+        assertTrue(lines.stream().anyMatch(l -> l.contains("读取 1 个文件")), lines.toString());
         assertTrue(lines.stream().anyMatch(l -> l.contains("README.md")), lines.toString());
     }
 
@@ -90,7 +90,7 @@ class ToolCallRendererTest {
         FoldableBlock b = registry.peekLast();
         assertFalse(b.isExpanded());
         String emitted = sink.toString(StandardCharsets.UTF_8);
-        assertTrue(emitted.contains("⏵"), emitted);
+        assertTrue(emitted.contains(">"), emitted);
     }
 
     @Test
@@ -106,14 +106,14 @@ class ToolCallRendererTest {
 
     @Test
     void toolLabelRendersBuiltinTools() {
-        assertEquals("📖 读取 1 个文件", ToolCallRenderer.toolLabel("read_file", 1));
-        assertEquals("✏️ 写入 2 个文件", ToolCallRenderer.toolLabel("write_file", 2));
-        assertEquals("⚡ 执行 1 条命令", ToolCallRenderer.toolLabel("execute_command", 1));
+        assertEquals("读取 1 个文件", ToolCallRenderer.toolLabel("read_file", 1));
+        assertEquals("写入 2 个文件", ToolCallRenderer.toolLabel("write_file", 2));
+        assertEquals("执行 1 条命令", ToolCallRenderer.toolLabel("execute_command", 1));
     }
 
     @Test
     void toolLabelRendersMcpTool() {
-        assertEquals("🔌 调用 MCP 工具 chrome-devtools.click",
+        assertEquals("调用 MCP 工具 chrome-devtools.click",
                 ToolCallRenderer.toolLabel("mcp__chrome-devtools__click", 1));
     }
 

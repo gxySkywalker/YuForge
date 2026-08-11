@@ -27,7 +27,7 @@ class ChangeVerificationTrackerTest {
         tracker.observe(result("execute_command", "命令执行完成 (exit code: 0)\nBUILD SUCCESS"));
 
         assertTrue(tracker.hasEvidence());
-        assertTrue(tracker.statusLine().startsWith("✅ 验证"));
+        assertTrue(tracker.statusLine().startsWith("[ok] 验证"));
     }
 
     @Test

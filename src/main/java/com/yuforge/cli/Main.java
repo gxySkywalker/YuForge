@@ -221,7 +221,7 @@ public class Main {
         YuForgeConfig config = YuForgeConfig.load();
         LlmClient llmClient = LlmClientFactory.createFromConfig(config);
         if (llmClient == null) {
-            System.err.println("❌ 错误: 未找到可用的 API Key");
+            System.err.println("[error] 错误: 未找到可用的 API Key");
             System.err.println("请在 .env 文件中添加 GLM_API_KEY、DEEPSEEK_API_KEY、STEP_API_KEY、KIMI_API_KEY、FREELLMAPI_API_KEY、XFYUN_MAAS_API_KEY 或 AGNES_API_KEY");
             System.exit(1);
         }
@@ -355,7 +355,7 @@ public class Main {
                     return;  // TUI 启动成功，不进入 CLI 循环
                 } catch (Exception e) {
                     hitlHandler.setDelegate(terminalHitlHandler);
-                    System.err.println("❌ TUI 启动失败，降级到 CLI: " + e.getMessage());
+                    System.err.println("[error] TUI 启动失败，降级到 CLI: " + e.getMessage());
                     e.printStackTrace();
                     // 降级到 CLI 继续执行
                 }
@@ -930,7 +930,7 @@ public class Main {
             renderer.close();
 
         } catch (IOException e) {
-            System.err.println("❌ 终端初始化失败: " + e.getMessage());
+            System.err.println("[error] 终端初始化失败: " + e.getMessage());
             System.exit(1);
         }
     }
@@ -999,7 +999,7 @@ public class Main {
         YuForgeConfig config = YuForgeConfig.load();
         LlmClient client = LlmClientFactory.createFromConfig(config);
         if (client == null) {
-            System.err.println("❌ 错误: 未找到可用的 API Key");
+            System.err.println("[error] 错误: 未找到可用的 API Key");
             System.exit(1);
         }
         int port = parseServePort(args, 8080);
@@ -1015,13 +1015,13 @@ public class Main {
                 store.close();
             }, "yuforge-runtime-api-shutdown"));
             server.start();
-            System.out.println("✅ YuForge Runtime API 已启动: http://127.0.0.1:" + server.port());
+            System.out.println("[ok] YuForge Runtime API 已启动: http://127.0.0.1:" + server.port());
             System.out.println("   认证: Authorization: Bearer <YUFORGE_RUNTIME_API_KEY>");
             new CountDownLatch(1).await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            System.err.println("❌ Runtime API 启动失败: " + e.getMessage());
+            System.err.println("[error] Runtime API 启动失败: " + e.getMessage());
             System.exit(1);
         }
     }
@@ -2888,7 +2888,7 @@ public class Main {
         try {
             Files.createDirectories(Path.of(System.getProperty(LOG_DIR_PROPERTY)));
         } catch (IOException e) {
-            System.err.println("⚠️ 创建日志目录失败: " + e.getMessage());
+            System.err.println("[warn] 创建日志目录失败: " + e.getMessage());
         }
     }
 

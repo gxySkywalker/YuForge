@@ -18,7 +18,7 @@ class ToolResultSummaryTest {
 
         String summary = ToolResultSummary.format(result);
 
-        assertTrue(summary.contains("✓ 读取 src/App.java完成 · 123ms"), summary);
+        assertTrue(summary.contains("[ok] 读取 src/App.java完成 · 123ms"), summary);
         assertFalse(summary.contains("secret-token"), summary);
     }
 
@@ -32,7 +32,7 @@ class ToolResultSummaryTest {
 
         String summary = ToolResultSummary.format(result);
 
-        assertTrue(summary.contains("⚠ 执行命令失败 (COMMAND_FAILED) · 2.2s"), summary);
+        assertTrue(summary.contains("[warn] 执行命令失败 (COMMAND_FAILED) · 2.2s"), summary);
         assertTrue(summary.contains("建议：先分析退出码和输出中的首个根因"), summary);
         assertFalse(summary.contains("super-secret"), summary);
     }

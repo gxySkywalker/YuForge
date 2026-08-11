@@ -62,7 +62,7 @@ public class FileTreePane extends Panel {
                     .sorted(Comparator.comparing(path -> path.getFileName().toString()))
                     .forEach(path -> fileList.addItem(path.getFileName().toString()));
         } catch (IOException e) {
-            System.err.println("⚠️ 列出目录失败: " + root + " - " + e.getMessage());
+            System.err.println("[warn] 列出目录失败: " + root + " - " + e.getMessage());
         }
     }
 
@@ -81,7 +81,7 @@ public class FileTreePane extends Panel {
                         .filter(line -> !line.isEmpty() && !line.startsWith("#"))
                         .forEach(patterns::add);
             } catch (IOException e) {
-                System.err.println("⚠️ 读取 filetree-ignore.txt 失败: " + e.getMessage());
+                System.err.println("[warn] 读取 filetree-ignore.txt 失败: " + e.getMessage());
             }
         }
 
