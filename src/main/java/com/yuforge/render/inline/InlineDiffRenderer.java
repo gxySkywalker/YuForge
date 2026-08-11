@@ -23,10 +23,6 @@ import java.util.Objects;
  */
 public final class InlineDiffRenderer {
 
-    private static final String GREEN = "[32m";
-    private static final String RED = "[31m";
-    private static final String CYAN = "[36m";
-    private static final String RESET = "[0m";
     private static final int CONTEXT_LINES = 2;
 
     private final PrintStream out;
@@ -59,19 +55,19 @@ public final class InlineDiffRenderer {
 
     private void renderNewFile(String after) {
         String[] lines = after.split("\n", -1);
-        out.println(CYAN + "@@ -0,0 +1," + lines.length + " @@" + RESET);
+        out.println(AnsiStyle.status("@@ -0,0 +1," + lines.length + " @@"));
         for (String line : lines) {
             if (line.isEmpty()) continue;
-            out.println(GREEN + "+" + line + RESET);
+            out.println(AnsiStyle.success("+" + line));
         }
     }
 
     private void renderDeleteFile(String before) {
         String[] lines = before.split("\n", -1);
-        out.println(CYAN + "@@ -1," + lines.length + " +0,0 @@" + RESET);
+        out.println(AnsiStyle.status("@@ -1," + lines.length + " +0,0 @@"));
         for (String line : lines) {
             if (line.isEmpty()) continue;
-            out.println(RED + "-" + line + RESET);
+            out.println(AnsiStyle.error("-" + line));
         }
     }
 
@@ -81,12 +77,12 @@ public final class InlineDiffRenderer {
         List<DiffOp> ops = computeDiff(beforeLines, afterLines);
         List<Hunk> hunks = groupIntoHunks(ops, beforeLines, afterLines);
         for (Hunk hunk : hunks) {
-            out.println(CYAN + hunk.header() + RESET);
+            out.println(AnsiStyle.status(hunk.header()));
             for (DiffOp op : hunk.ops) {
                 switch (op.type) {
                     case EQUAL -> out.println(" " + op.text);
-                    case ADD -> out.println(GREEN + "+" + op.text + RESET);
-                    case DELETE -> out.println(RED + "-" + op.text + RESET);
+                    case ADD -> out.println(AnsiStyle.success("+" + op.text));
+                    case DELETE -> out.println(AnsiStyle.error("-" + op.text));
                 }
             }
         }

@@ -646,6 +646,40 @@ class InlineRendererTest {
         }
     }
 
+    @Test
+    void largeDiffCollapsesToStatsAndCanBeExpanded() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.beginTurn();
+            StringBuilder before = new StringBuilder();
+            StringBuilder after = new StringBuilder();
+            for (int i = 0; i < 40; i++) {
+                before.append("old line ").append(i).append('\n');
+                after.append("new line ").append(i).append('\n');
+            }
+
+            renderer.appendDiff("src/Main.java", before.toString(), after.toString());
+            String collapsed = AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8));
+            assertTrue(collapsed.contains("Update(src/Main.java)"), collapsed);
+            assertTrue(collapsed.contains("+40"), collapsed);
+            assertTrue(collapsed.contains("-40"), collapsed);
+            assertFalse(collapsed.contains("old line 20"), collapsed);
+
+            sink.reset();
+            assertTrue(renderer.toggleLastBlock());
+            String expanded = AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8));
+            assertTrue(expanded.contains("old line 20"), expanded);
+            assertTrue(expanded.contains("new line 20"), expanded);
+        } finally {
+            renderer.close();
+        }
+    }
+
     private static int occurrences(String text, String needle) {
         int count = 0;
         int offset = 0;

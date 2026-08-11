@@ -1,5 +1,6 @@
 package com.yuforge.render.inline;
 
+import com.yuforge.util.AnsiStyle;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -51,6 +52,9 @@ class InlineDiffRendererTest {
         String text = sink.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("-before"), text);
         assertTrue(text.contains("+after"), text);
+        String visible = AnsiStyle.strip(text);
+        assertFalse(visible.contains("[32m"), "ANSI 控制码不能作为可见正文泄漏: " + visible);
+        assertFalse(visible.contains("[31m"), "ANSI 控制码不能作为可见正文泄漏: " + visible);
     }
 
     @Test

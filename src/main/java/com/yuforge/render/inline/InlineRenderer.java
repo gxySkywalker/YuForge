@@ -14,6 +14,7 @@ import org.jline.terminal.Terminal;
 import org.jline.utils.AttributedString;
 
 import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -30,6 +31,7 @@ import java.util.concurrent.TimeUnit;
  * 现阶段对应方法委托给 {@link PlainRenderer} 兜底。
  */
 public final class InlineRenderer implements Renderer {
+    private static final int INLINE_DIFF_LINE_LIMIT = 28;
 
     private final Terminal terminal;
     private final PlainRenderer fallback;
@@ -414,7 +416,39 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void appendDiff(String filePath, String before, String after) {
-        new InlineDiffRenderer(out).render(filePath, before, after);
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        PrintStream capture = new PrintStream(buffer, true, StandardCharsets.UTF_8);
+        new InlineDiffRenderer(capture).render(filePath, before, after);
+        capture.flush();
+
+        String rendered = buffer.toString(StandardCharsets.UTF_8);
+        List<String> lines = rendered.lines().toList();
+        if (lines.size() <= INLINE_DIFF_LINE_LIMIT) {
+            emit(rendered.endsWith("\n") ? rendered : rendered + "\n");
+            return;
+        }
+
+        int additions = 0;
+        int deletions = 0;
+        for (String line : lines) {
+            String plain = AnsiStyle.strip(line);
+            if (plain.startsWith("+") && !plain.startsWith("+++")) {
+                additions++;
+            } else if (plain.startsWith("-") && !plain.startsWith("---")) {
+                deletions++;
+            }
+        }
+        String path = filePath == null || filePath.isBlank() ? "(unnamed)" : filePath;
+        String header = AnsiStyle.subtle("> Update(" + path + ") · ")
+                + AnsiStyle.success("+" + additions) + " "
+                + AnsiStyle.error("-" + deletions)
+                + AnsiStyle.subtle(" · " + lines.size() + " 行 (ctrl+o to expand)");
+        FoldableBlock block = new FoldableBlock(out, header, lines);
+        blockRegistry.register(block);
+        synchronized (transcriptLock) {
+            transcript.add(new BlockEntry(block));
+            emit(header + "\n");
+        }
     }
 
     @Override
