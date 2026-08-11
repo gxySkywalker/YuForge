@@ -54,6 +54,8 @@ public final class InlineRenderer implements Renderer {
     private volatile boolean turnHadActivity;
     private String toolExecutionPhase;
     private long toolExecutionStartedNanos;
+    private boolean simpleActivityActive;
+    private long simpleActivityStartedNanos;
     private int visibleExplorationBatches;
     private int pendingExplorationBatches;
     private final List<LlmClient.ToolCall> pendingExplorationCalls = new ArrayList<>();
@@ -249,7 +251,14 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void beginActivity(String label, String detail) {
-        if (activityDisplay != null && !closed) {
+        if (closed) {
+            return;
+        }
+        // 跟踪开始时间，供 endActivity 写入 transcript 级耗时行。
+        simpleActivityActive = true;
+        simpleActivityStartedNanos = System.nanoTime();
+        turnHadActivity = true;
+        if (activityDisplay != null) {
             activityDisplay.beginActivity(label, detail);
         }
     }
@@ -258,6 +267,12 @@ public final class InlineRenderer implements Renderer {
     public void endActivity() {
         if (activityDisplay != null) {
             activityDisplay.end();
+        }
+        if (simpleActivityActive) {
+            simpleActivityActive = false;
+            long elapsedMillis = Math.max(0L,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - simpleActivityStartedNanos));
+            stream.println(AnsiStyle.muted("  Completed in " + formatElapsed(elapsedMillis)));
         }
     }
 
