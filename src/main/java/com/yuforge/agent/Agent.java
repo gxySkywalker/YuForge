@@ -236,6 +236,12 @@ public class Agent {
                         conversationHistory.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
                     }
                     appendImageToolMessages(toolResults);
+                    ToolExecutionResult rejected = firstUserRejected(toolResults);
+                    if (rejected != null) {
+                        streamRenderer.finish();
+                        pushStatus(budget, startNanos, "idle");
+                        return "⏹️ 已按你的决定停止当前任务：" + rejected.userRejectionReason();
+                    }
                     pushStatus(budget, startNanos, "running");
 
                     // 继续循环，让 LLM 根据工具结果继续思考
@@ -755,6 +761,10 @@ public class Agent {
             emitToolResultSummary(result);
         }
         return results;
+    }
+
+    private static ToolExecutionResult firstUserRejected(List<ToolExecutionResult> results) {
+        return results.stream().filter(ToolExecutionResult::userRejected).findFirst().orElse(null);
     }
 
     private void emitToolResultSummary(ToolExecutionResult result) {

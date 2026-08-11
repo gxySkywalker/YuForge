@@ -57,6 +57,25 @@ class InlineApprovalPrompterTest {
     }
 
     @Test
+    void productionPathReadsReasonFromSameTerminalReader() throws Exception {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.enterRawMode()).thenReturn(null);
+        NonBlockingReader reader = Mockito.mock(NonBlockingReader.class);
+        Mockito.when(reader.read()).thenReturn(
+                (int) 'n',
+                (int) 't', (int) 'o', (int) 'o', (int) ' ', (int) 'r', (int) 'i', (int) 's', (int) 'k', (int) 'y',
+                (int) '\n');
+        Mockito.when(terminal.reader()).thenReturn(reader);
+
+        InlineApprovalPrompter p = new InlineApprovalPrompter(
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), terminal);
+
+        ApprovalResult result = p.prompt(ApprovalRequest.of("write_file", "{}", "test"));
+        assertEquals(ApprovalResult.Decision.REJECTED, result.decision());
+        assertEquals("too risky", result.reason());
+    }
+
+    @Test
     void singleCharAOnBuiltinToolApproveAll() throws Exception {
         Terminal terminal = mockTerminalReturning('a');
         ByteArrayOutputStream sink = new ByteArrayOutputStream();

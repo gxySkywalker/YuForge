@@ -10,9 +10,7 @@ import org.jline.terminal.Terminal;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Inline 形态的 HITL 审批提示。
@@ -30,16 +28,16 @@ public final class InlineApprovalPrompter {
 
     private final PrintStream out;
     private final Terminal terminal;
-    private final BufferedReader stdinReader;
+    private final BufferedReader testLineReader;
 
     public InlineApprovalPrompter(PrintStream out, Terminal terminal) {
-        this(out, terminal, new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8)));
+        this(out, terminal, null);
     }
 
     InlineApprovalPrompter(PrintStream out, Terminal terminal, BufferedReader stdinReader) {
         this.out = out;
         this.terminal = terminal;
-        this.stdinReader = stdinReader;
+        this.testLineReader = stdinReader;
     }
 
     public ApprovalResult prompt(ApprovalRequest request) {
@@ -121,29 +119,23 @@ public final class InlineApprovalPrompter {
     private String promptForReason() {
         out.print("  拒绝原因（可直接回车跳过）: ");
         out.flush();
-        try {
-            String line = stdinReader.readLine();
-            return line == null ? "" : line.trim();
-        } catch (IOException e) {
-            return "";
-        }
+        String line = readTextLine();
+        return line == null ? "" : line.trim();
     }
 
     private ApprovalResult promptApproveAllScope(ApprovalRequest request) {
         String mcpServer = ApprovalPolicy.mcpServerName(request.toolName());
         if (mcpServer == null || mcpServer.isBlank()) {
-            out.println(AnsiStyle.subtle("  已批准，后续 " + request.toolName() + " 自动通过"));
+            String scope = ApprovalPolicy.approvalScopeKey(request.toolName());
+            String label = "workspace_edit".equals(scope) ? "本会话项目文件修改" : request.toolName();
+            out.println(AnsiStyle.subtle("  已批准，后续" + label + "自动通过"));
             return ApprovalResult.approveAll();
         }
         out.println("  全部放行范围 [tool/Enter] 仅本工具  [server] 整个 MCP server " + mcpServer);
         out.print("> ");
         out.flush();
         String scope;
-        try {
-            scope = stdinReader.readLine();
-        } catch (IOException e) {
-            scope = "";
-        }
+        scope = readTextLine();
         String n = scope == null ? "" : scope.trim().toLowerCase();
         if ("server".equals(n) || "s".equals(n)) {
             out.println(AnsiStyle.subtle("  已批准 server 范围"));
@@ -158,11 +150,7 @@ public final class InlineApprovalPrompter {
         out.print("  修改后的 JSON（空行 = 保留原参数）: ");
         out.flush();
         String modified;
-        try {
-            modified = stdinReader.readLine();
-        } catch (IOException e) {
-            return null;
-        }
+        modified = readTextLine();
         if (modified == null || modified.isBlank()) {
             out.println(AnsiStyle.subtle("  保留原参数"));
             return ApprovalResult.approve();
@@ -175,5 +163,46 @@ public final class InlineApprovalPrompter {
             return null;
         }
         return ApprovalResult.modify(trimmed);
+    }
+
+    /**
+     * 单键选择和后续文本必须从同一个 JLine terminal reader 读取。
+     * 混用 terminal.reader() 与 System.in BufferedReader 会让两个缓冲器争抢输入，
+     * 在 Windows Terminal 下常表现为拒绝原因被吞掉。
+     */
+    private String readTextLine() {
+        if (testLineReader != null) {
+            try {
+                return testLineReader.readLine();
+            } catch (IOException e) {
+                return null;
+            }
+        }
+        StringBuilder line = new StringBuilder();
+        try {
+            while (true) {
+                int ch = terminal.reader().read();
+                if (ch < 0) {
+                    return line.isEmpty() ? null : line.toString();
+                }
+                if (ch == '\r' || ch == '\n') {
+                    out.println();
+                    return line.toString();
+                }
+                if ((ch == '\b' || ch == 127) && !line.isEmpty()) {
+                    line.deleteCharAt(line.length() - 1);
+                    out.print("\b \b");
+                    out.flush();
+                    continue;
+                }
+                if (!Character.isISOControl(ch)) {
+                    line.append((char) ch);
+                    out.print((char) ch);
+                    out.flush();
+                }
+            }
+        } catch (IOException e) {
+            return null;
+        }
     }
 }

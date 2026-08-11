@@ -208,6 +208,7 @@ flowchart TB
 
 - 网页、搜索和 MCP 输出均作为不可信外部内容处理，不能授权工具调用、文件写入或长期记忆。
 - 高风险工具经过 `HitlToolRegistry → ToolRegistry → PathGuard / CommandGuard`；用户批准不能越过策略拒绝。
+- 拒绝或跳过审批会立即终止当前任务，并把可选拒绝原因反馈给执行链；可信工作区可按会话放行项目文件修改，Shell、后台进程和 MCP 保持独立审批范围。
 - 文件路径受项目根围栏限制；已有未提交改动默认属于用户，Agent 不会擅自回退。
 - Prompt Injection 防护已覆盖来源标记、授权、审批和输出侧拦截。
 

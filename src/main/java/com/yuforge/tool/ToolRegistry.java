@@ -1747,6 +1747,21 @@ public class ToolRegistry {
         public boolean hasImageParts() {
             return imageParts != null && !imageParts.isEmpty();
         }
+
+        public boolean userRejected() {
+            return result != null && (result.startsWith("[HITL] 操作已被拒绝：")
+                    || result.startsWith("[HITL] 操作已被跳过"));
+        }
+
+        public String userRejectionReason() {
+            if (!userRejected()) {
+                return "";
+            }
+            int separator = result.indexOf('：');
+            return separator >= 0 && separator + 1 < result.length()
+                    ? result.substring(separator + 1).trim()
+                    : "用户拒绝了工具调用";
+        }
     }
 
     public interface ToolExecutor {

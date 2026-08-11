@@ -8,6 +8,7 @@ import com.yuforge.plan.ExecutionPlan;
 import com.yuforge.plan.Planner;
 import com.yuforge.plan.Task;
 import com.yuforge.tool.ToolRegistry;
+import com.yuforge.tool.ToolResultDiagnostic;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -172,6 +173,42 @@ class PlanExecuteAgentTest {
         assertTrue(rendered.contains("任务输出 [task_1]"));
         assertFalse(rendered.contains("任务结果 [task_1]"),
                 "tool-call 前后的流式 content 不应被误标成任务结果: " + rendered);
+    }
+
+    @Test
+    void shouldStopPlanWhenUserRejectsToolCall() throws Exception {
+        StubGLMClient llmClient = new StubGLMClient(List.of(
+                new LlmClient.ChatResponse(
+                        "assistant",
+                        "",
+                        List.of(new LlmClient.ToolCall(
+                                "call_rejected",
+                                new LlmClient.ToolCall.Function("write_file", "{\"path\":\"a.txt\"}"))),
+                        20,
+                        10)
+        ));
+        ToolRegistry rejectingRegistry = new ToolRegistry() {
+            @Override
+            public List<ToolExecutionResult> executeTools(List<ToolInvocation> invocations) {
+                ToolInvocation invocation = invocations.get(0);
+                String result = "[HITL] 操作已被拒绝：不要修改这个文件";
+                return List.of(new ToolExecutionResult(
+                        invocation.id(), invocation.name(), invocation.argumentsJson(), result,
+                        1, false, List.of(), ToolResultDiagnostic.classify(result, false)));
+            }
+        };
+        PlanExecuteAgent agent = new PlanExecuteAgent(
+                llmClient,
+                rejectingRegistry,
+                new StubPlanner(llmClient),
+                null,
+                (goal, plan) -> PlanExecuteAgent.PlanReviewDecision.execute()
+        );
+
+        String result = agent.run("修改文件");
+
+        assertTrue(result.contains("停止当前计划"));
+        assertTrue(result.contains("不要修改这个文件"));
     }
 
     private record StubResponse(LlmClient.ChatResponse response, boolean streamContent,

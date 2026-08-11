@@ -60,19 +60,25 @@ public class PlanExecuteAgent {
         }
     }
 
-    private record TaskRunResult(String result, boolean streamedOutput) {
+    private record TaskRunResult(String result, boolean streamedOutput, boolean userRejected) {
         static TaskRunResult of(String result, boolean streamedOutput) {
-            return new TaskRunResult(result, streamedOutput);
+            return new TaskRunResult(result, streamedOutput, false);
+        }
+
+        static TaskRunResult rejected(String result, boolean streamedOutput) {
+            return new TaskRunResult(result, streamedOutput, true);
         }
     }
 
-    private record TaskExecutionResult(Task task, String result, boolean streamedOutput, Exception error) {
+    private record TaskExecutionResult(Task task, String result, boolean streamedOutput,
+                                       boolean userRejected, Exception error) {
         static TaskExecutionResult success(Task task, TaskRunResult taskRunResult) {
-            return new TaskExecutionResult(task, taskRunResult.result(), taskRunResult.streamedOutput(), null);
+            return new TaskExecutionResult(task, taskRunResult.result(), taskRunResult.streamedOutput(),
+                    taskRunResult.userRejected(), null);
         }
 
         static TaskExecutionResult failure(Task task, Exception error) {
-            return new TaskExecutionResult(task, null, false, error);
+            return new TaskExecutionResult(task, null, false, false, error);
         }
 
         boolean failed() {
@@ -320,6 +326,11 @@ public class PlanExecuteAgent {
             List<TaskExecutionResult> batchResults = executeTaskBatch(plan, executableTasks, streamState);
             for (TaskExecutionResult batchResult : batchResults) {
                 Task task = batchResult.task();
+
+                if (batchResult.userRejected()) {
+                    log.info("Plan stopped by user rejection in task {}", task.getId());
+                    return "⏹️ 已按你的决定停止当前计划：" + batchResult.result();
+                }
 
                 if (!batchResult.failed()) {
                     task.markCompleted(batchResult.result());
@@ -581,6 +592,15 @@ public class PlanExecuteAgent {
                 messages.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
             }
             appendImageToolMessages(messages, toolResults);
+            ToolExecutionResult rejected = toolResults.stream()
+                    .filter(ToolExecutionResult::userRejected)
+                    .findFirst()
+                    .orElse(null);
+            if (rejected != null) {
+                streamRenderer.finish();
+                return TaskRunResult.rejected("用户拒绝工具调用：" + rejected.userRejectionReason(),
+                        streamRenderer.hasStreamedOutput());
+            }
         }
 
         String fallbackResult = allResults.toString().trim();

@@ -165,8 +165,9 @@ public class TerminalHitlHandler implements HitlHandler {
     private ApprovalResult promptApproveAllScope(ApprovalRequest request) {
         String mcpServer = ApprovalPolicy.mcpServerName(request.toolName());
         if (mcpServer == null || mcpServer.isBlank()) {
-            approvedAllByTool.add(request.toolName());
-            out.println("  已批准，后续 " + request.toolName() + " 操作将自动通过");
+            String approvalScope = ApprovalPolicy.approvalScopeKey(request.toolName());
+            approvedAllByTool.add(approvalScope);
+            out.println("  已批准，后续 " + approvalScopeLabel(request.toolName()) + " 将自动通过");
             return ApprovalResult.approveAll();
         }
 
@@ -188,9 +189,15 @@ public class TerminalHitlHandler implements HitlHandler {
             out.println("  已批准，后续 MCP server " + mcpServer + " 的工具调用将自动通过");
             return ApprovalResult.approveAllByServer();
         }
-        approvedAllByTool.add(request.toolName());
-        out.println("  已批准，后续 " + request.toolName() + " 操作将自动通过");
+        approvedAllByTool.add(ApprovalPolicy.approvalScopeKey(request.toolName()));
+        out.println("  已批准，后续 " + approvalScopeLabel(request.toolName()) + " 将自动通过");
         return ApprovalResult.approveAll();
+    }
+
+    private static String approvalScopeLabel(String toolName) {
+        return "workspace_edit".equals(ApprovalPolicy.approvalScopeKey(toolName))
+                ? "本会话项目文件修改"
+                : toolName + " 操作";
     }
 
     /**
@@ -242,7 +249,7 @@ public class TerminalHitlHandler implements HitlHandler {
 
     @Override
     public boolean isApprovedAllByTool(String toolName) {
-        return toolName != null && approvedAllByTool.contains(toolName);
+        return toolName != null && approvedAllByTool.contains(ApprovalPolicy.approvalScopeKey(toolName));
     }
 
     @Override

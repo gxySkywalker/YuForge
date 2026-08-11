@@ -48,6 +48,33 @@ class RendererHitlHandlerTest {
     }
 
     @Test
+    void approveAllForPatchAlsoCoversOtherWorkspaceEdits() {
+        StubRenderer stub = new StubRenderer();
+        stub.nextResult = ApprovalResult.approveAll();
+        RendererHitlHandler handler = new RendererHitlHandler(stub, true);
+
+        handler.requestApproval(ApprovalRequest.of("apply_patch", "{}", "test"));
+
+        assertTrue(handler.isApprovedAllByTool("write_file"));
+        assertTrue(handler.isApprovedAllByTool("create_project"));
+        ApprovalResult result = handler.requestApproval(
+                ApprovalRequest.of("write_file", "{}", "test"));
+        assertEquals(1, stub.promptCount);
+        assertEquals(ApprovalResult.Decision.APPROVED_ALL, result.decision());
+    }
+
+    @Test
+    void workspaceEditApprovalDoesNotCoverCommands() {
+        StubRenderer stub = new StubRenderer();
+        stub.nextResult = ApprovalResult.approveAll();
+        RendererHitlHandler handler = new RendererHitlHandler(stub, true);
+
+        handler.requestApproval(ApprovalRequest.of("apply_patch", "{}", "test"));
+
+        assertFalse(handler.isApprovedAllByTool("execute_command"));
+    }
+
+    @Test
     void approveAllByServerCoversFutureMcpCalls() {
         StubRenderer stub = new StubRenderer();
         stub.nextResult = ApprovalResult.approveAllByServer();

@@ -87,4 +87,15 @@ public class ApprovalPolicy {
         String[] parts = toolName.split("__", 3);
         return parts.length >= 2 ? parts[1] : null;
     }
+
+    /**
+     * 会话级放行键。项目内文本编辑属于同一能力族，避免一次代码改动在
+     * apply_patch/write_file/create_project 之间反复审批；命令和 MCP 仍保持独立边界。
+     */
+    public static String approvalScopeKey(String toolName) {
+        if ("write_file".equals(toolName) || "apply_patch".equals(toolName) || "create_project".equals(toolName)) {
+            return "workspace_edit";
+        }
+        return toolName;
+    }
 }

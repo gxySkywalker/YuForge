@@ -261,6 +261,15 @@ public class SubAgent {
                         conversationHistory.add(LlmClient.Message.tool(toolResult.id(), observation.modelResult()));
                     }
                     appendImageToolMessages(toolResults);
+                    ToolExecutionResult rejected = toolResults.stream()
+                            .filter(ToolExecutionResult::userRejected)
+                            .findFirst()
+                            .orElse(null);
+                    if (rejected != null) {
+                        streamRenderer.finish();
+                        return AgentMessage.error(name, role,
+                                "用户拒绝工具调用，子任务已停止：" + rejected.userRejectionReason());
+                    }
                     continue;
                 }
 

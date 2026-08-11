@@ -42,8 +42,6 @@ public final class RendererHitlHandler implements HitlHandler {
         boolean sensitivePerCall = request.sensitiveNotice() != null && !request.sensitiveNotice().isBlank();
 
         if (!sensitivePerCall && isApprovedAllByTool(request.toolName())) {
-            renderer.stream().println("  [HITL] " + request.toolName()
-                    + " 已在本次会话中全部放行，自动通过");
             return ApprovalResult.approveAll();
         }
         if (!sensitivePerCall && isApprovedAllByServer(mcpServer)) {
@@ -57,7 +55,7 @@ public final class RendererHitlHandler implements HitlHandler {
             return ApprovalResult.reject("渲染器返回 null");
         }
         if (result.isApprovedAllForTool()) {
-            approvedAllByTool.add(request.toolName());
+            approvedAllByTool.add(ApprovalPolicy.approvalScopeKey(request.toolName()));
         } else if (result.isApprovedAllForServer() && mcpServer != null) {
             approvedAllByServer.add(mcpServer);
         }
@@ -66,7 +64,7 @@ public final class RendererHitlHandler implements HitlHandler {
 
     @Override
     public boolean isApprovedAllByTool(String toolName) {
-        return toolName != null && approvedAllByTool.contains(toolName);
+        return toolName != null && approvedAllByTool.contains(ApprovalPolicy.approvalScopeKey(toolName));
     }
 
     @Override
