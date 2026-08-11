@@ -756,7 +756,13 @@ public class Agent {
         if (invocations.size() > 1) {
             log.info("Executing {} tool calls in parallel (iteration={})", invocations.size(), iteration);
         }
-        List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
+        renderer().beginToolExecution(toolCalls);
+        List<ToolExecutionResult> results = List.of();
+        try {
+            results = toolRegistry.executeTools(invocations);
+        } finally {
+            renderer().endToolExecution(results.size(), invocations.size());
+        }
         for (ToolExecutionResult result : results) {
             log.debug("Tool result preview [{}]: {}", result.name(), preview(result.result(), 300));
             emitToolResultSummary(result);

@@ -66,6 +66,22 @@ class InlineActivityDisplayTest {
     }
 
     @Test
+    void toolActivityShowsPhaseAndCurrentTotalProgress() throws Exception {
+        ByteArrayOutputStream terminalSink = new ByteArrayOutputStream();
+        Terminal terminal = mockAnsiTerminal(terminalSink);
+
+        try (InlineActivityDisplay display = new InlineActivityDisplay(terminal,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8))) {
+            display.beginActivity("验证中 · 0/3", null);
+            terminal.writer().flush();
+        }
+
+        String output = terminalSink.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("验证中 · 0/3"), output);
+        assertFalse(output.contains("Esc cancel"), output);
+    }
+
+    @Test
     void refreshIfActiveIsNoOpWhenIdle() throws Exception {
         ByteArrayOutputStream terminalSink = new ByteArrayOutputStream();
         Terminal terminal = mockAnsiTerminal(terminalSink);

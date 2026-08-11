@@ -52,6 +52,8 @@ public final class InlineRenderer implements Renderer {
     private int turnThinkingCycles;
     private volatile StatusInfo latestStatus;
     private volatile boolean turnHadActivity;
+    private String toolExecutionPhase;
+    private long toolExecutionStartedNanos;
     private int visibleExplorationBatches;
     private int pendingExplorationBatches;
     private final List<LlmClient.ToolCall> pendingExplorationCalls = new ArrayList<>();
@@ -363,7 +365,7 @@ public final class InlineRenderer implements Renderer {
             pendingExplorationBatches++;
             pendingExplorationCalls.addAll(toolCalls);
             if (activityDisplay != null && !closed) {
-                activityDisplay.beginActivity("Exploring", pendingExplorationBatches + " batches queued");
+                activityDisplay.beginActivity("Exploring · " + pendingExplorationBatches + " batches queued", null);
             }
             if (pendingExplorationBatches >= EXPLORATION_BATCH_MERGE_SIZE) {
                 flushPendingExploration();
@@ -412,6 +414,43 @@ public final class InlineRenderer implements Renderer {
     @Override
     public boolean rendersSuccessfulToolResultSummaries() {
         return false;
+    }
+
+    @Override
+    public void beginToolExecution(List<LlmClient.ToolCall> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return;
+        }
+        toolExecutionPhase = toolBatchPhase(toolCalls);
+        toolExecutionStartedNanos = System.nanoTime();
+        beginActivity(toolExecutionPhase + "中 · 0/" + toolCalls.size(), null);
+        turnHadActivity = true;
+    }
+
+    @Override
+    public void endToolExecution(int completed, int total) {
+        endActivity();
+        long elapsedMillis = toolExecutionStartedNanos == 0L ? 0L
+                : Math.max(0L, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - toolExecutionStartedNanos));
+        String phase = toolExecutionPhase == null ? "工具" : toolExecutionPhase;
+        toolExecutionPhase = null;
+        toolExecutionStartedNanos = 0L;
+        if (!"探索".equals(phase)) {
+            emit(AnsiStyle.subtle("  " + phase + "完成 · " + completed + "/" + total
+                    + " · " + formatElapsed(elapsedMillis)) + "\n");
+        }
+    }
+
+    private static String toolBatchPhase(List<LlmClient.ToolCall> calls) {
+        String phase = null;
+        for (LlmClient.ToolCall call : calls) {
+            String current = ToolCallRenderer.phase(call.function().name());
+            if (phase != null && !phase.equals(current)) {
+                return "执行";
+            }
+            phase = current;
+        }
+        return phase == null ? "工具" : phase;
     }
 
     @Override
@@ -514,6 +553,9 @@ public final class InlineRenderer implements Renderer {
 
     /** Main.java 用：Ctrl+O 只把最近工具/代码块详情追加到末尾，绝不重绘历史。 */
     public boolean toggleLastBlock() {
+        if (activityDisplay != null && activityDisplay.isActive()) {
+            activityDisplay.end();
+        }
         FoldableBlock block = blockRegistry.expandLastForAppend();
         if (block == null) {
             return false;

@@ -912,7 +912,7 @@ public class Main {
                 // 纯聊天/只读任务不建快照；首次可能改动 workspace 的工具才按需建立 pre-turn 快照。
                 // 先给出统一工作反馈，避免首个 LLM 请求的网络等待看起来像无响应。
                 renderer.beginThinking("Thinking");
-                String response = runWithCancelSupport(terminal,
+                String response = runWithCancelSupport(terminal, renderer,
                         ui,
                         () -> snapshotService.runTurn(snapshotMode, taskInput, runTask::call));
                 if (!"react".equals(snapshotMode)) {
@@ -1239,7 +1239,8 @@ public class Main {
         return new AgentOrchestrator(llmClient, reactAgent.getToolRegistry(), reactAgent.getMemoryManager(), renderer);
     }
 
-    private static String runWithCancelSupport(Terminal terminal, PrintStream out, Callable<String> task) {
+    private static String runWithCancelSupport(Terminal terminal, Renderer renderer,
+                                               PrintStream out, Callable<String> task) {
         CancellationToken token = CancellationContext.startRun();
         ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
             Thread thread = new Thread(r, "yuforge-agent-runner");
@@ -1258,7 +1259,7 @@ public class Main {
                 }
             }
             while (!future.isDone()) {
-                if (original != null && readEscCancel(terminal)) {
+                if (original != null && readRuntimeControl(terminal, renderer)) {
                     token.cancel();
                     future.cancel(true);
                     executor.shutdownNow();
@@ -1303,6 +1304,10 @@ public class Main {
      * - CONTROL_SEQUENCE / BRACKETED_PASTE / OTHER → 丢弃，不取消
      */
     static boolean readEscCancel(Terminal terminal) {
+        return readRuntimeControl(terminal, null);
+    }
+
+    static boolean readRuntimeControl(Terminal terminal, Renderer renderer) {
         if (terminal == null) {
             return false;
         }
@@ -1310,6 +1315,10 @@ public class Main {
             NonBlockingReader reader = terminal.reader();
             int next = reader.read(50);
             if (next == NonBlockingReader.READ_EXPIRED || next < 0) {
+                return false;
+            }
+            if (next == CTRL_O && renderer instanceof InlineRenderer inline) {
+                inline.toggleLastBlock();
                 return false;
             }
             String escTail = next == 27 ? readInputBurst(terminal, 80, 20, 120) : null;

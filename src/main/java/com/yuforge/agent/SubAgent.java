@@ -404,7 +404,18 @@ public class SubAgent {
         if (invocations.size() > 1) {
             log.info("[{}] executing {} tool calls in parallel", name, invocations.size());
         }
-        List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
+        boolean renderProgress = renderer != null && out == renderer.stream() && showWorkerTranscript;
+        if (renderProgress) {
+            renderer.beginToolExecution(toolCalls);
+        }
+        List<ToolExecutionResult> results = List.of();
+        try {
+            results = toolRegistry.executeTools(invocations);
+        } finally {
+            if (renderProgress) {
+                renderer.endToolExecution(results.size(), invocations.size());
+            }
+        }
         for (ToolExecutionResult result : results) {
             String summary = ToolResultSummary.format(result);
             boolean suppressSuccess = (!showWorkerTranscript

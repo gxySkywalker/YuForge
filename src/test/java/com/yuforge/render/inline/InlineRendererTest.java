@@ -516,6 +516,48 @@ class InlineRendererTest {
     }
 
     @Test
+    void toolExecutionLifecycleShowsStableCompletionProgress() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("dumb");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            List<LlmClient.ToolCall> calls = List.of(
+                    tc("execute_command", "{\"command\":\"mvn test\"}"),
+                    tc("execute_command", "{\"command\":\"git diff --check\"}"));
+            renderer.beginToolExecution(calls);
+            renderer.endToolExecution(2, 2);
+
+            String output = AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8));
+            assertTrue(output.contains("验证完成 · 2/2"), output);
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
+    void ctrlOExpansionRemainsAvailableWhileToolActivityIsRunning() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            List<LlmClient.ToolCall> calls = List.of(tc("execute_command", "{\"command\":\"mvn test\"}"));
+            renderer.appendToolCalls(calls);
+            renderer.beginToolExecution(calls);
+
+            assertTrue(renderer.toggleLastBlock());
+            assertTrue(AnsiStyle.strip(sink.toString(StandardCharsets.UTF_8)).contains("mvn test"));
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
     void closeIsIdempotent() {
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");

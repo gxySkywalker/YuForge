@@ -152,7 +152,7 @@ public final class ToolCallRenderer {
     }
 
     /** 为工具卡片提供稳定、可扫读的开发阶段，不把实现细节塞进输入 transcript。 */
-    private static String phase(String toolName) {
+    static String phase(String toolName) {
         return switch (toolName) {
             case "read_file", "list_dir", "glob_files", "grep_code", "search_code" -> "探索";
             case "write_file", "apply_patch", "create_project", "revert_turn" -> "修改";

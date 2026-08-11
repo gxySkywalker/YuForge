@@ -123,6 +123,14 @@ public interface Renderer extends AutoCloseable {
      */
     void appendToolCalls(List<LlmClient.ToolCall> toolCalls);
 
+    /** 工具批次开始执行；inline renderer 用于展示阶段、批次规模和动态耗时。 */
+    default void beginToolExecution(List<LlmClient.ToolCall> toolCalls) {
+    }
+
+    /** 工具批次结束；completed 是已返回终态结果的数量。 */
+    default void endToolExecution(int completed, int total) {
+    }
+
     /**
      * 是否在折叠工具卡片之外逐条显示成功结果。
      *

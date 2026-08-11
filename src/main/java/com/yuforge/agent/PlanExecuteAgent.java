@@ -683,7 +683,18 @@ public class PlanExecuteAgent {
         if (invocations.size() > 1) {
             log.info("Task {} executing {} tool calls in parallel", taskId, invocations.size());
         }
-        List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
+        boolean renderProgress = renderer != null && out == renderer.stream();
+        if (renderProgress) {
+            renderer.beginToolExecution(toolCalls);
+        }
+        List<ToolExecutionResult> results = List.of();
+        try {
+            results = toolRegistry.executeTools(invocations);
+        } finally {
+            if (renderProgress) {
+                renderer.endToolExecution(results.size(), invocations.size());
+            }
+        }
         for (ToolExecutionResult result : results) {
             log.debug("Task {} tool result preview [{}]: {}", taskId, result.name(), preview(result.result(), 300));
             if (out != null) {
