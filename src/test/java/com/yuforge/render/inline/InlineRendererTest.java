@@ -440,7 +440,7 @@ class InlineRendererTest {
     }
 
     @Test
-    void toggleLastBlockAppendsDetailsWithoutRewritingTranscript() {
+    void toggleLastBlockExpandsAndCollapsesWhileActivityRemainsVisible() {
         Terminal terminal = Mockito.mock(Terminal.class);
         Mockito.when(terminal.getType()).thenReturn("xterm-256color");
         Mockito.when(terminal.getSize()).thenReturn(new Size(120, 4));
@@ -449,18 +449,19 @@ class InlineRendererTest {
                 new PrintStream(sink, true, StandardCharsets.UTF_8));
         try {
             renderer.beginTurn();
-            renderer.stream().println("before");
             renderer.appendToolCalls(List.of(tc("read_file", "{\"path\":\"README.md\"}")));
-            renderer.stream().println("after");
+            renderer.beginActivity("执行中 · 0/1", null);
 
             sink.reset();
+            assertTrue(renderer.toggleLastBlock());
             assertTrue(renderer.toggleLastBlock());
 
             String emitted = sink.toString(StandardCharsets.UTF_8);
             assertTrue(emitted.contains("README.md"), emitted);
-            assertTrue(emitted.contains("details"), emitted);
-            assertFalse(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
-            assertFalse(emitted.contains(AnsiSeq.moveUp(1)), emitted);
+            assertTrue(emitted.contains("collapse"), emitted);
+            assertTrue(emitted.contains("执行中 · 0/1"), emitted);
+            assertTrue(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
+            assertTrue(emitted.contains(AnsiSeq.moveUp(1)), emitted);
         } finally {
             renderer.close();
         }

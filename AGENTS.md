@@ -114,7 +114,7 @@ src/main/java/com/yuforge/
 - 普通任务提交后，inline renderer 必须立即显示独占的单行 `Thinking... (Esc cancel, Xs)`，覆盖 pre-turn Side-Git 快照、上下文准备和 ReAct LLM 调用，避免大仓库快照期间出现无反馈等待；默认不把 provider 原始 `reasoning_content` 落入 transcript。模型历史与日志仍按协议保留。仅本地排障可通过 `-Dyuforge.render.show_reasoning=true` 或 `YUFORGE_RENDER_SHOW_REASONING=true` 显式回显；Plan task / SubAgent 同样遵守此开关。活动区只能用回车清理自己当前所在的单行，不能使用 `moveUp`、独立 JLine `Display.update()` 或 `CLEAR_TO_EOS` 覆盖 transcript。
 - 同一用户 turn 内的多次 LLM thinking 循环只在当前活动行动态显示秒表；每次工具往返结束不得追加一条独立 `Thought for`。回到输入框前只追加一次本轮累计思考耗时，避免长任务被十几条计时记录淹没。
 - inline 工具卡片保持折叠、单行可扫读：按工具语义展示“探索 / 修改 / 验证 / 运行”阶段、关键对象和耗时；失败只显示错误码与脱敏的短恢复建议，禁止把原始工具输出、命令错误正文或敏感内容刷进 transcript。默认普通滚屏按 append-only 原则工作：Ctrl+O 只将最近块的详情追加到末尾，不可回退光标重绘历史；thinking 同样是稳定事件行，不维护会随 resize 覆盖错位的 live area。
-- Renderer 的工具批次必须有 begin/update/end 生命周期：执行期间用单行活动态显示“阶段中 · 0/N → 1/N → N/N · elapsed”，结束后对修改/验证/运行留下“阶段完成 · N/N · elapsed”终态；`ToolRegistry.executeTools` 的完成回调可从并行线程触发，只用于进度通知且不能改变最终结果顺序；任务运行期的键盘监听必须把 `Ctrl+O` 路由到最近折叠块，不能当作无关输入 drain。
+- Renderer 的工具批次必须有 begin/update/end 生命周期：执行期间用单行活动态显示“阶段中 · 0/N → 1/N → N/N · elapsed”，结束后对修改/验证/运行留下“阶段完成 · N/N · elapsed”终态；`ToolRegistry.executeTools` 的完成回调可从并行线程触发，只用于进度通知且不能改变最终结果顺序；任务运行期的键盘监听必须把 `Ctrl+O` 路由到最近折叠块，展开/收起时暂时隐藏再恢复同一个活动计时行，不能把活动行永久结束，也不能对已被后续 transcript 推走的 frozen 块回写。
 - 长任务中的连续只读探索工具批次采用有界节流：前两批即时展示，后续最多四批合并成一个可展开摘要；文件修改、命令执行、验证及失败信息始终即时展示。节流只能减少 transcript 噪音，不能丢失可展开的工具调用参数。
 - inline 工具批次的成功结果默认收进折叠边界，不得在卡片下逐条重复打印 `[ok]`；错误、超时、策略拒绝与用户拒绝仍需立即进入 transcript。多列 Markdown 表格在有效列宽不足时自动降级为“记录 + 字段”布局，禁止把路径或类名压成逐字符竖排。
 - inline 流式代码块先显示稳定的 `generating code` 行，结束时追加可折叠代码块；不得依赖 ANSI `moveUp` / `CLEAR_TO_EOS` 回退覆盖已写出的 transcript，避免宽字符换行或异步输出导致 scrollback 错位。

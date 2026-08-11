@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
  * Fixed-height transient activity area for model thinking.
@@ -99,6 +100,33 @@ final class InlineActivityDisplay implements AutoCloseable {
         }
         this.label = (label == null || label.isBlank()) ? this.label : label.trim();
         renderLocked();
+    }
+
+    /**
+     * 暂时移除活动行，让紧邻它上方的最近折叠块安全原地切换，随后恢复同一计时活动行。
+     * startedNanos 不变，因此展开详情不会让用户失去“仍在执行”的时间感知。
+     */
+    synchronized boolean whileHidden(BooleanSupplier action) {
+        if (closed) {
+            return action.getAsBoolean();
+        }
+        boolean wasActive = active;
+        if (wasActive) {
+            cancelTickLocked();
+            clearLocked();
+            active = false;
+        }
+        boolean changed;
+        try {
+            changed = action.getAsBoolean();
+        } finally {
+            if (wasActive && !closed) {
+                active = true;
+                renderLocked();
+                restartTickLocked();
+            }
+        }
+        return changed;
     }
 
     synchronized void appendThinking(String delta) {

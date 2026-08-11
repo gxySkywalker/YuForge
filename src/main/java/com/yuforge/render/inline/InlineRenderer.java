@@ -567,23 +567,15 @@ public final class InlineRenderer implements Renderer {
         return blockRegistry;
     }
 
-    /** Main.java 用：Ctrl+O 只把最近工具/代码块详情追加到末尾，绝不重绘历史。 */
+    /**
+     * Main.java 用：Ctrl+O 原地展开/收起仍紧邻活动行的最近块。
+     * 新 transcript 出现后块会被冻结，宁可拒绝回写，也不冒险覆盖滚屏历史。
+     */
     public boolean toggleLastBlock() {
         if (activityDisplay != null && activityDisplay.isActive()) {
-            activityDisplay.end();
+            return activityDisplay.whileHidden(blockRegistry::toggleLast);
         }
-        FoldableBlock block = blockRegistry.expandLastForAppend();
-        if (block == null) {
-            return false;
-        }
-        StringBuilder details = new StringBuilder(AnsiStyle.subtle("  ⏷ details\n"));
-        for (String line : block.currentLines()) {
-            details.append(line).append('\n');
-        }
-        synchronized (transcriptLock) {
-            emit(details.toString());
-        }
-        return true;
+        return blockRegistry.toggleLast();
     }
 
     private PrintStream createTranscriptStream(PrintStream delegate) {
@@ -790,7 +782,9 @@ public final class InlineRenderer implements Renderer {
     private record BlockEntry(FoldableBlock block) implements TranscriptEntry {
         @Override
         public String render() {
-            return String.join(System.lineSeparator(), block.currentLines()) + System.lineSeparator();
+            String rendered = String.join(System.lineSeparator(), block.currentLines()) + System.lineSeparator();
+            block.markRendered();
+            return rendered;
         }
     }
 }

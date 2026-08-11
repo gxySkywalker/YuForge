@@ -104,6 +104,11 @@ public final class FoldableBlock {
         return true;
     }
 
+    /** Transcript renderer 已把当前状态写入终端，记录实际占用行数供紧邻位置的原地 toggle 使用。 */
+    void markRendered() {
+        renderedLineCount = currentLines().size();
+    }
+
     /** 当前状态下应渲染的完整行。 */
     public List<String> currentLines() {
         if (!expanded) {
