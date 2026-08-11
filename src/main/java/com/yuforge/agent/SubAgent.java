@@ -21,6 +21,7 @@ import com.yuforge.skill.SkillRegistry;
 import com.yuforge.tool.ToolRegistry;
 import com.yuforge.tool.ToolRegistry.ToolExecutionResult;
 import com.yuforge.tool.ToolRegistry.ToolInvocation;
+import com.yuforge.tool.ToolResultDiagnostic;
 import com.yuforge.util.AnsiStyle;
 import com.yuforge.util.TerminalMarkdownRenderer;
 import com.yuforge.image.ImageReferenceParser;
@@ -34,6 +35,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -45,6 +47,8 @@ import java.util.function.Supplier;
 public class SubAgent {
     private static final Logger log = LoggerFactory.getLogger(SubAgent.class);
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
+    private static final Set<String> PLANNER_READ_ONLY_TOOLS = Set.of(
+            "read_file", "list_dir", "glob_files", "grep_code", "search_code", "read_tool_artifact");
 
     private final String name;
     private final AgentRole role;
@@ -97,7 +101,7 @@ public class SubAgent {
         return promptAssembler.assemble(promptMode(), PromptContext.builder()
                 .projectMemoryContext(buildProjectMemoryContext())
                 .skillIndex(buildSkillIndex())
-                .toolsEnabled(llmClient == null || llmClient.supportsTools())
+                .toolsEnabled(llmClient == null || (llmClient.supportsTools() && shouldUseTools()))
                 .build());
     }
 
@@ -232,7 +236,7 @@ public class SubAgent {
                 streamRenderer.beginThinking();
                 LlmClient.ChatResponse response = llmClient.chat(
                         conversationHistory,
-                        shouldUseTools() && llmClient.supportsTools() ? toolRegistry.getToolDefinitions() : null,
+                        shouldUseTools() && llmClient.supportsTools() ? toolDefinitionsForRole() : null,
                         streamRenderer
                 );
                 LlmTraceLogger.logReasoning(log,
@@ -347,10 +351,20 @@ public class SubAgent {
     }
 
     /**
-     * 只有执行者需要工具；规划者和检查者都只输出分析结果。
+     * 规划者可用有界只读工具了解工作区，执行者可用完整工具；检查者只输出审查结果。
      */
     private boolean shouldUseTools() {
-        return role == AgentRole.WORKER;
+        return role != AgentRole.REVIEWER;
+    }
+
+    private List<LlmClient.Tool> toolDefinitionsForRole() {
+        List<LlmClient.Tool> definitions = toolRegistry.getToolDefinitions();
+        if (role != AgentRole.PLANNER) {
+            return definitions;
+        }
+        return definitions.stream()
+                .filter(tool -> PLANNER_READ_ONLY_TOOLS.contains(tool.name()))
+                .toList();
     }
 
     private void injectPendingLspDiagnostics(PrintStream out) {
@@ -368,6 +382,13 @@ public class SubAgent {
         for (LlmClient.ToolCall toolCall : toolCalls) {
             String toolName = toolCall.function().name();
             String toolArgs = toolCall.function().arguments();
+            if (role == AgentRole.PLANNER && !PLANNER_READ_ONLY_TOOLS.contains(toolName)) {
+                String denied = "策略拒绝: 规划者只能使用只读代码探索工具";
+                ToolInvocation invocation = new ToolInvocation(toolCall.id(), toolName, toolArgs);
+                return List.of(new ToolExecutionResult(
+                        invocation.id(), invocation.name(), invocation.argumentsJson(), denied,
+                        0, false, List.of(), ToolResultDiagnostic.classify(denied, false)));
+            }
             log.info("[{}] scheduling tool: {}", name, toolName);
             log.debug("[{}] tool args [{}]: {}", name, toolName, toolArgs);
             invocations.add(new ToolInvocation(toolCall.id(), toolName, toolArgs));

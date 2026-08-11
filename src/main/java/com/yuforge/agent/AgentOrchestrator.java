@@ -169,23 +169,39 @@ public class AgentOrchestrator {
         AgentMessage planMessage = AgentMessage.task("orchestrator",
                 "请为以下任务制定执行计划：\n" + userInput);
         AgentMessage planResult = planner.execute(planMessage, out);
-        planner.clearHistory();
         if (CancellationContext.isCancelled()) {
+            planner.clearHistory();
             return "⏹️ 已取消当前多 Agent 任务。";
         }
 
         if (planResult.type() == AgentMessage.Type.ERROR) {
+            planner.clearHistory();
             return "❌ 规划阶段失败，规划者 LLM 调用出错：" + planResult.content();
         }
         if (planResult.content() == null || planResult.content().isBlank()) {
+            planner.clearHistory();
             return "❌ 规划失败：规划者未能生成有效计划";
         }
 
         // 2. 解析计划
         List<ExecutionStep> steps = parsePlan(planResult.content());
         if (steps.isEmpty()) {
-            return "❌ 规划失败：无法解析执行计划\n原始输出:\n" + planResult.content();
+            log.warn("Planner returned invalid plan, requesting one structured repair; preview={}",
+                    preview(planResult.content(), 500));
+            out.println(AnsiStyle.subtle("  规划格式不完整，正在自动修复一次..."));
+            AgentMessage repaired = planner.execute(AgentMessage.task("orchestrator", """
+                    你上一轮没有输出可解析的计划 JSON。现在不要调用工具、不要解释、不要输出 Markdown，
+                    只根据已经获得的信息重新输出包含非空 steps 数组的合法 JSON。
+                    """), out);
+            if (repaired.type() != AgentMessage.Type.ERROR) {
+                steps = parsePlan(repaired.content());
+            }
+            if (steps.isEmpty()) {
+                planner.clearHistory();
+                return "❌ 规划失败：模型连续两次未返回合法执行计划。请重试或切换模型。";
+            }
         }
+        planner.clearHistory();
 
         out.println(AnsiStyle.heading("📋 执行计划"));
         out.println(summarizeSteps(steps) + "\n");
@@ -241,9 +257,7 @@ public class AgentOrchestrator {
      */
     List<ExecutionStep> parsePlan(String planJson) {
         try {
-            String cleaned = planJson.replaceAll("```json\\s*", "")
-                    .replaceAll("```\\s*", "")
-                    .trim();
+            String cleaned = extractFirstJsonObject(planJson);
 
             JsonNode root = mapper.readTree(cleaned);
             JsonNode stepsNode = root.path("steps");
@@ -299,6 +313,46 @@ public class AgentOrchestrator {
             log.error("Failed to parse plan JSON", e);
             return List.of();
         }
+    }
+
+    private static String extractFirstJsonObject(String text) {
+        if (text == null) {
+            return "";
+        }
+        int start = text.indexOf('{');
+        if (start < 0) {
+            return text.trim();
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (ch == '"') {
+                inString = true;
+            } else if (ch == '{') {
+                depth++;
+            } else if (ch == '}' && --depth == 0) {
+                return text.substring(start, i + 1);
+            }
+        }
+        return text.substring(start).trim();
+    }
+
+    private static String preview(String text, int maxChars) {
+        if (text == null) return "";
+        String compact = text.replaceAll("\\s+", " ").trim();
+        return compact.length() <= maxChars ? compact : compact.substring(0, maxChars) + "...";
     }
 
     /**

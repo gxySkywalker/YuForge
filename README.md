@@ -25,7 +25,7 @@
 
 ## 核心能力
 
-- **Code Agent Runtime**：ReAct 为默认执行路径；复杂任务可切换 `/plan` 或 `/team`。
+- **Code Agent Runtime**：ReAct 为默认执行路径；复杂任务可切换 `/plan` 或 `/team`。Team Planner 会先用有界只读工具理解工作区，再输出 DAG 计划；格式异常时自动修复一次，写入与命令只交给 Worker。
 - **真实代码库探索**：`glob_files → grep_code → read_file` 的实时探索路径；RAG 仅作为模糊语义检索补充。
 - **长上下文与记忆**：工具结果归档恢复、结构化压缩、项目级 `YUFORGE.md`、长期记忆和 checkpoint 会话恢复。
 - **安全工具调用**：工作区信任、HITL、PathGuard、CommandGuard、审计日志与 Prompt Injection 防护。

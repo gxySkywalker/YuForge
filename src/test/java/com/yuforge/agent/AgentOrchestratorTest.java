@@ -115,6 +115,32 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    void shouldExtractJsonPlanFromSurroundingModelText() {
+        AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
+        String output = """
+                我已经完成工作区分析，计划如下：
+                {"summary":"修复项目","steps":[{"id":"s1","description":"读取入口文件","type":"FILE_READ","dependencies":[]}]}
+                接下来交给 Worker 执行。
+                """;
+
+        List<AgentOrchestrator.ExecutionStep> steps = orchestrator.parsePlan(output);
+
+        assertEquals(1, steps.size());
+        assertEquals("读取入口文件", steps.get(0).description());
+    }
+
+    @Test
+    void shouldStillRejectDsmlToolTextWithoutPlanJson() {
+        AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
+        String output = """
+                我先查看工作区。
+                <｜DSML｜ToolCall><invoke name="list_dir"></invoke></｜DSML｜ToolCall>
+                """;
+
+        assertTrue(orchestrator.parsePlan(output).isEmpty());
+    }
+
+    @Test
     void shouldParsePlanWithTasksField() {
         // 兼容 "tasks" 字段（Plan-and-Execute 的格式）
         AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));

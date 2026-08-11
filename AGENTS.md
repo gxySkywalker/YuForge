@@ -179,6 +179,7 @@ src/main/java/com/yuforge/
 
 - 三条路径都走 `executeTools()`，不手写 for-loop
 - 默认最多 4 个并发，结果保持原始顺序
+- `/team` 的 Planner 可以调用 `list_dir` / `glob_files` / `grep_code` / `read_file` / `search_code` / `read_tool_artifact` 做有界只读探索，但不得获得写入或命令工具。探索后必须输出计划 JSON；编排器可从少量前后说明中提取首个完整 JSON 对象，首次格式错误时只自动修复一次，连续失败则明确终止，不能把 DSML/XML 伪工具文本当计划执行。
 
 ### Web + Browser
 

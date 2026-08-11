@@ -39,9 +39,16 @@ class SubAgentTest {
     }
 
     @Test
-    void shouldOnlyEnableToolsForWorker() throws Exception {
-        assertFalse(invokeShouldUseTools(new SubAgent("planner", AgentRole.PLANNER,
-                new GLMClient("test-key"), new ToolRegistry())));
+    void shouldGivePlannerOnlyReadToolsAndWorkerFullTools() throws Exception {
+        SubAgent planner = new SubAgent("planner", AgentRole.PLANNER,
+                new GLMClient("test-key"), new ToolRegistry());
+        assertTrue(invokeShouldUseTools(planner));
+        List<LlmClient.Tool> plannerTools = invokeToolDefinitionsForRole(planner);
+        assertTrue(plannerTools.stream().anyMatch(tool -> "list_dir".equals(tool.name())));
+        assertTrue(plannerTools.stream().anyMatch(tool -> "read_file".equals(tool.name())));
+        assertFalse(plannerTools.stream().anyMatch(tool -> "write_file".equals(tool.name())));
+        assertFalse(plannerTools.stream().anyMatch(tool -> "execute_command".equals(tool.name())));
+
         assertTrue(invokeShouldUseTools(new SubAgent("worker", AgentRole.WORKER,
                 new GLMClient("test-key"), new ToolRegistry())));
         assertFalse(invokeShouldUseTools(new SubAgent("reviewer", AgentRole.REVIEWER,
@@ -162,6 +169,13 @@ class SubAgentTest {
         Method method = SubAgent.class.getDeclaredMethod("shouldUseTools");
         method.setAccessible(true);
         return (boolean) method.invoke(agent);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<LlmClient.Tool> invokeToolDefinitionsForRole(SubAgent agent) throws Exception {
+        Method method = SubAgent.class.getDeclaredMethod("toolDefinitionsForRole");
+        method.setAccessible(true);
+        return (List<LlmClient.Tool>) method.invoke(agent);
     }
 
     /**
