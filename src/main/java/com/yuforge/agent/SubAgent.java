@@ -447,18 +447,18 @@ public class SubAgent {
     private static String toolLabel(String toolName, int count) {
         return switch (toolName) {
             case "read_file" -> "📖 读取 " + count + " 个文件";
-            case "write_file" -> "✏️ 写入 " + count + " 个文件";
+            case "write_file" -> "写入 " + count + " 个文件";
             case "apply_patch" -> "🩹 修改 " + count + " 个文件";
             case "list_dir" -> "📂 列出 " + count + " 个目录";
-            case "execute_command" -> "⚡ 执行 " + count + " 条命令";
+            case "execute_command" -> "执行 " + count + " 条命令";
             case "start_background_process" -> "🚀 启动 " + count + " 个开发服务";
             case "list_background_processes" -> "🧭 查看后台服务";
             case "read_background_process_log" -> "📜 查看服务日志";
             case "inspect_background_process" -> "🩺 诊断后台服务";
-            case "wait_background_process_ready" -> "⏳ 等待服务就绪";
-            case "stop_background_process" -> "⏹️ 停止后台服务";
-            case "create_project" -> "🏗️ 创建 " + count + " 个项目";
-            case "search_code" -> "🔍 搜索代码 " + count + " 次";
+            case "wait_background_process_ready" -> "等待服务就绪";
+            case "stop_background_process" -> "停止后台服务";
+            case "create_project" -> "创建 " + count + " 个项目";
+            case "search_code" -> "搜索代码 " + count + " 次";
             case "web_search" -> "🌐 联网搜索 " + count + " 次";
             case "web_fetch" -> "📰 抓取 " + count + " 个网页";
             case "save_memory" -> "💾 保存长期记忆 " + count + " 条";
@@ -516,7 +516,7 @@ public class SubAgent {
      *
      * 与 {@link com.yuforge.agent.Agent.StreamRenderer} 使用同一策略应对
      * "content 开始后又追加 reasoning"的场景：迟到的 reasoning 会被累积到 lateReasoning，
-     * 在 finish() 时以"🧠 补充思考"独立展示，避免混入结果区。
+     * 在 finish() 时以“补充思考”独立展示，避免混入结果区。
      */
     private static final class SubAgentStreamRenderer implements LlmClient.StreamListener {
         private final String agentName;
@@ -551,6 +551,12 @@ public class SubAgent {
             if (delta == null || delta.isEmpty()) {
                 return;
             }
+            // Planner/Reviewer 的原始流只用于内部编排：Planner 可能在工具探索阶段多次输出
+            // 旁白，Reviewer 通常返回机器可读 JSON。把它们刷进用户 transcript 会造成
+            // 重复“规划结果/审查结果”和原始协议噪音；用户只看 Orchestrator 的阶段摘要。
+            if (role != AgentRole.WORKER) {
+                return;
+            }
             if (!ReasoningDisplayPolicy.showRawReasoning()) {
                 return;
             }
@@ -563,7 +569,7 @@ public class SubAgent {
                 if (pendingReasoning.toString().isBlank()) {
                     return;
                 }
-                out.println(AnsiStyle.heading("🧠 " + reasoningLabel() + " [" + agentName + "]"));
+                out.println(AnsiStyle.heading(reasoningLabel() + " [" + agentName + "]"));
                 reasoningRenderer = new TerminalMarkdownRenderer(out);
                 reasoningRenderer.append(pendingReasoning.toString());
                 pendingReasoning.setLength(0);
@@ -581,13 +587,16 @@ public class SubAgent {
                 return;
             }
             endThinking();
+            if (role != AgentRole.WORKER) {
+                return;
+            }
             if (!contentStarted) {
                 if (reasoningStarted && reasoningRenderer != null) {
                     reasoningRenderer.finish();
                     out.println();
                 } else if (pendingReasoning.length() > 0 && !pendingReasoning.toString().isBlank()) {
                     // 实质 reasoning 尚未流出就被 content 打断：先补打思考过程再切到结果
-                    out.println(AnsiStyle.heading("🧠 " + reasoningLabel() + " [" + agentName + "]"));
+                    out.println(AnsiStyle.heading(reasoningLabel() + " [" + agentName + "]"));
                     TerminalMarkdownRenderer r = new TerminalMarkdownRenderer(out);
                     r.append(pendingReasoning.toString());
                     r.finish();
@@ -595,7 +604,7 @@ public class SubAgent {
                     pendingReasoning.setLength(0);
                     reasoningStarted = true;
                 }
-                out.println(AnsiStyle.section("🤖 " + contentLabel() + " [" + agentName + "]"));
+                out.println(AnsiStyle.section(contentLabel() + " [" + agentName + "]"));
                 contentRenderer = new TerminalMarkdownRenderer(out);
                 contentStarted = true;
                 streamedOutput = true;
@@ -639,7 +648,7 @@ public class SubAgent {
             String late = lateReasoning.toString().trim();
             if (ReasoningDisplayPolicy.showRawReasoning() && !late.isEmpty()) {
                 out.println();
-                out.println(AnsiStyle.heading("🧠 补充思考 [" + agentName + "]"));
+                out.println(AnsiStyle.heading("补充思考 [" + agentName + "]"));
                 TerminalMarkdownRenderer r = new TerminalMarkdownRenderer(out);
                 r.append(late);
                 r.finish();
@@ -665,7 +674,7 @@ public class SubAgent {
             String late = lateReasoning.toString().trim();
             if (ReasoningDisplayPolicy.showRawReasoning() && !late.isEmpty()) {
                 out.println();
-                out.println(AnsiStyle.heading("🧠 补充思考 [" + agentName + "]"));
+                out.println(AnsiStyle.heading("补充思考 [" + agentName + "]"));
                 TerminalMarkdownRenderer r = new TerminalMarkdownRenderer(out);
                 r.append(late);
                 r.finish();

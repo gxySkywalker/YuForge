@@ -165,6 +165,26 @@ class SubAgentTest {
         assertTrue(output.contains("答案"), "content should still appear");
     }
 
+    @Test
+    void plannerKeepsProtocolOutputOutOfUserTranscript() {
+        String planJson = "{\"summary\":\"计划\",\"steps\":[{\"id\":\"s1\"}]}";
+        MultiCallStreamClient llm = new MultiCallStreamClient(List.of(new CallScript(listener -> {
+            listener.onReasoningDelta("先分析目录结构");
+            listener.onContentDelta(planJson);
+        }, new LlmClient.ChatResponse("assistant", planJson, "先分析目录结构", null, 10, 5))));
+        SubAgent planner = new SubAgent("planner", AgentRole.PLANNER, llm, new ToolRegistry());
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        AgentMessage result = planner.execute(AgentMessage.task("orchestrator", "制定计划"),
+                new PrintStream(baos, true, StandardCharsets.UTF_8));
+
+        String output = baos.toString(StandardCharsets.UTF_8);
+        assertTrue(result.content().contains("\"steps\""), "orchestrator still needs the structured plan");
+        assertFalse(output.contains("规划结果"), output);
+        assertFalse(output.contains("\"steps\""), output);
+        assertFalse(output.contains("先分析目录结构"), output);
+    }
+
     private boolean invokeShouldUseTools(SubAgent agent) throws Exception {
         Method method = SubAgent.class.getDeclaredMethod("shouldUseTools");
         method.setAccessible(true);

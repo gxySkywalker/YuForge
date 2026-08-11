@@ -159,28 +159,28 @@ public class AgentOrchestrator {
         toolRegistry.setMemoryWriteAuthorization(userInput);
         memoryManager.addUserMessage(userInput);
         if (CancellationContext.isCancelled()) {
-            return "⏹️ 已取消当前多 Agent 任务。";
+            return "已取消当前多 Agent 任务。";
         }
 
         // 1. 规划阶段：让规划者拆解任务
-        out.println(AnsiStyle.heading("📋 第一阶段：规划"));
-        out.println("🧑‍💼 规划者正在分析任务...\n");
+        out.println(AnsiStyle.heading("Planning"));
+        out.println(AnsiStyle.subtle("  Planner 正在探索项目并拆解任务..."));
 
         AgentMessage planMessage = AgentMessage.task("orchestrator",
                 "请为以下任务制定执行计划：\n" + userInput);
         AgentMessage planResult = planner.execute(planMessage, out);
         if (CancellationContext.isCancelled()) {
             planner.clearHistory();
-            return "⏹️ 已取消当前多 Agent 任务。";
+            return "已取消当前多 Agent 任务。";
         }
 
         if (planResult.type() == AgentMessage.Type.ERROR) {
             planner.clearHistory();
-            return "❌ 规划阶段失败，规划者 LLM 调用出错：" + planResult.content();
+            return "规划阶段失败：" + planResult.content();
         }
         if (planResult.content() == null || planResult.content().isBlank()) {
             planner.clearHistory();
-            return "❌ 规划失败：规划者未能生成有效计划";
+            return "规划失败：Planner 未能生成有效计划";
         }
 
         // 2. 解析计划
@@ -188,7 +188,7 @@ public class AgentOrchestrator {
         if (steps.isEmpty()) {
             log.warn("Planner returned invalid plan, requesting one structured repair; preview={}",
                     preview(planResult.content(), 500));
-            out.println(AnsiStyle.subtle("  规划格式不完整，正在自动修复一次..."));
+            out.println(AnsiStyle.subtle("  Plan 格式不完整，正在自动修复一次..."));
             AgentMessage repaired = planner.execute(AgentMessage.task("orchestrator", """
                     你上一轮没有输出可解析的计划 JSON。现在不要调用工具、不要解释、不要输出 Markdown，
                     只根据已经获得的信息重新输出包含非空 steps 数组的合法 JSON。
@@ -198,23 +198,23 @@ public class AgentOrchestrator {
             }
             if (steps.isEmpty()) {
                 planner.clearHistory();
-                return "❌ 规划失败：模型连续两次未返回合法执行计划。请重试或切换模型。";
+                return "规划失败：模型连续两次未返回合法执行计划。请重试或切换模型。";
             }
         }
         planner.clearHistory();
 
-        out.println(AnsiStyle.heading("📋 执行计划"));
-        out.println(summarizeSteps(steps) + "\n");
+        out.println(AnsiStyle.heading("Plan ready · " + steps.size() + " steps"));
+        out.println(summarizeSteps(steps));
 
         // 3. 执行阶段：按依赖顺序分配给执行者
-        out.println(AnsiStyle.heading("⚡ 第二阶段：执行"));
+        out.println(AnsiStyle.heading("Executing"));
         Map<String, Integer> retryCount = new ConcurrentHashMap<>();
         int singleStepCursor = 0;
         int batchIndex = 0;
 
         while (true) {
             if (CancellationContext.isCancelled()) {
-                return "⏹️ 已取消当前多 Agent 任务。";
+                return "已取消当前多 Agent 任务。";
             }
             List<ExecutionStep> executable = getExecutableSteps(steps);
             if (executable.isEmpty()) {
@@ -232,8 +232,8 @@ public class AgentOrchestrator {
                 worker.clearHistory();
             } else {
                 // 多步批次：真正并行执行，每步用独立的 PrintStream 缓冲，完成后按 step_id 顺序 flush
-                out.println("⚡ 批次 #" + batchIndex + "：" + executable.size()
-                        + " 个独立步骤并行执行（最多 " + workers.size() + " 个并发 Worker）\n");
+                out.println(AnsiStyle.section("Parallel batch " + batchIndex + " · " + executable.size()
+                        + " steps · max " + workers.size() + " workers"));
                 runBatchParallel(executable, steps, retryCount);
             }
         }
@@ -241,7 +241,7 @@ public class AgentOrchestrator {
         // 5. 处理因前置失败而无法执行的残留步骤（显式提示用户）
         for (ExecutionStep step : steps) {
             if (step.status() == StepStatus.PENDING) {
-                out.println("⏭️ 步骤 [" + step.id() + "] 因前置步骤失败被跳过: " + step.description());
+                out.println("Skipped [" + step.id() + "]：前置步骤失败 · " + step.description());
             }
         }
 
@@ -509,11 +509,11 @@ public class AgentOrchestrator {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     updateStep(steps, step.id(), step.withFailed("并行执行被中断"));
-                    stepOut.println("❌ 步骤 [" + step.id() + "] 被中断\n");
+                    stepOut.println("Interrupted [" + step.id() + "]\n");
                 } catch (RuntimeException e) {
                     log.error("Parallel step {} failed unexpectedly", step.id(), e);
                     updateStep(steps, step.id(), step.withFailed("并行执行异常: " + e.getMessage()));
-                    stepOut.println("❌ 步骤 [" + step.id() + "] 并行执行异常：" + e.getMessage() + "\n");
+                    stepOut.println("Failed [" + step.id() + "]：并行执行异常 · " + e.getMessage() + "\n");
                 } finally {
                     if (worker != null) {
                         worker.clearHistory();
@@ -556,10 +556,13 @@ public class AgentOrchestrator {
                          Map<String, Integer> retryCount,
                          SubAgent worker, SubAgent reviewer, String context,
                          PrintStream out) {
-        out.println("🛠️ " + worker.getName() + " 执行步骤 [" + step.id() + "]: " + step.description());
+        int ordinal = Math.max(1, steps.indexOf(step) + 1);
+        String progress = ordinal + "/" + steps.size();
+        out.println(AnsiStyle.section("Executing " + progress + " · " + step.description()
+                + " [" + worker.getName() + "]"));
         if (CancellationContext.isCancelled()) {
             updateStep(steps, step.id(), step.withFailed("用户取消"));
-            out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
+            out.println("Cancelled [" + step.id() + "]\n");
             return;
         }
 
@@ -567,28 +570,28 @@ public class AgentOrchestrator {
         AgentMessage result = worker.executeWithContext(taskMsg, context, out);
         if (CancellationContext.isCancelled()) {
             updateStep(steps, step.id(), step.withFailed("用户取消"));
-            out.println("⏹️ 步骤 [" + step.id() + "] 已取消\n");
+            out.println("Cancelled [" + step.id() + "]\n");
             return;
         }
 
         if (result.type() == AgentMessage.Type.ERROR) {
             updateStep(steps, step.id(), step.withFailed(result.content()));
-            out.println("❌ 步骤 [" + step.id() + "] 执行失败：" + result.content() + "\n");
+            out.println("Failed [" + step.id() + "]：" + result.content() + "\n");
             return;
         }
         if (result.content() == null || result.content().isBlank()) {
             updateStep(steps, step.id(), step.withFailed("执行结果为空"));
-            out.println("❌ 步骤 [" + step.id() + "] 执行失败：结果为空\n");
+            out.println("Failed [" + step.id() + "]：结果为空\n");
             return;
         }
 
-        out.println("🔍 " + reviewer.getName() + " 正在审查步骤 [" + step.id() + "] 的结果...");
+        out.println(AnsiStyle.subtle("  Reviewing " + progress + " · " + reviewer.getName()));
         AgentMessage reviewResult = reviewer.review(step.description(), result.content(), out);
         reviewer.clearHistory();
 
         if (reviewResult.type() == AgentMessage.Type.ERROR) {
             log.warn("Reviewer failed for step {}: {}", step.id(), reviewResult.content());
-            out.println("⚠️ 步骤 [" + step.id() + "] 审查阶段 LLM 调用失败，保留当前执行结果\n");
+            out.println("Review unavailable [" + step.id() + "]：保留当前执行结果\n");
             updateStep(steps, step.id(), step.withResult(result.content()));
             return;
         }
@@ -598,7 +601,7 @@ public class AgentOrchestrator {
 
         if (approved) {
             updateStep(steps, step.id(), step.withResult(acceptedResult));
-            out.println("✅ 步骤 [" + step.id() + "] 审查通过\n");
+            out.println(AnsiStyle.section("  Completed " + progress) + "\n");
             return;
         }
 
@@ -609,7 +612,7 @@ public class AgentOrchestrator {
         while (!approved && retries < MAX_RETRIES_PER_STEP) {
             retries++;
             retryCount.put(step.id(), retries);
-            out.println("⚠️ 步骤 [" + step.id() + "] 审查未通过，正在重新执行...");
+            out.println("Retrying [" + step.id() + "]：审查未通过");
             out.println("   反馈: " + issues + "\n");
 
             String feedbackContext = context + "\n\n之前的执行结果被审查拒绝，原因：\n" + issues;
@@ -645,9 +648,9 @@ public class AgentOrchestrator {
 
         updateStep(steps, step.id(), step.withResult(acceptedResult));
         if (approved) {
-            out.println("✅ 步骤 [" + step.id() + "] 重试后审查通过\n");
+            out.println(AnsiStyle.section("  Completed " + progress + " after retry") + "\n");
         } else {
-            out.println("⚠️ 步骤 [" + step.id() + "] 超过最大重试次数，保留当前结果\n");
+            out.println("Retry limit reached [" + step.id() + "]：保留当前结果\n");
         }
     }
 
@@ -674,12 +677,9 @@ public class AgentOrchestrator {
 
     private String summarizeSteps(List<ExecutionStep> steps) {
         StringBuilder sb = new StringBuilder();
-        for (ExecutionStep step : steps) {
-            String deps = step.dependencies().isEmpty() ? "无"
-                    : String.join(", ", step.dependencies());
-            sb.append(String.format("  %s [%s] %s (依赖: %s)%n",
-                    step.status() == StepStatus.COMPLETED ? "✅" : "⏳",
-                    step.id(), step.description(), deps));
+        for (int i = 0; i < steps.size(); i++) {
+            ExecutionStep step = steps.get(i);
+            sb.append(String.format("  %d. %s%n", i + 1, step.description()));
         }
         return sb.toString();
     }
@@ -696,22 +696,22 @@ public class AgentOrchestrator {
         boolean hasFailedSteps = steps.stream().anyMatch(step -> step.status() == StepStatus.FAILED);
 
         if (allCompleted) {
-            result.append("✅ 多 Agent 协作任务完成！\n\n");
+            result.append("Multi-Agent task completed.\n\n");
         } else if (hasFailedSteps) {
-            result.append("⚠️ 多 Agent 协作任务未完全完成，存在失败步骤。\n\n");
+            result.append("Multi-Agent task finished with failed steps.\n\n");
         } else {
-            result.append("⚠️ 多 Agent 协作任务部分完成，仍有未执行步骤。\n\n");
+            result.append("Multi-Agent task partially completed.\n\n");
         }
-        result.append("📋 执行总结：\n");
+        result.append("Summary:\n");
 
         for (ExecutionStep step : steps) {
             result.append("[").append(step.id()).append("] ");
             if (step.status() == StepStatus.COMPLETED) {
-                result.append("✅ ");
+                result.append("completed · ");
             } else if (step.status() == StepStatus.FAILED) {
-                result.append("❌ ");
+                result.append("failed · ");
             } else {
-                result.append("⏳ ");
+                result.append("pending · ");
             }
             result.append(step.description()).append("\n");
 

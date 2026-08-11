@@ -115,6 +115,7 @@ src/main/java/com/yuforge/
 - inline 工具卡片保持折叠、单行可扫读：按工具语义展示“探索 / 修改 / 验证 / 运行”阶段、关键对象和耗时；失败只显示错误码与脱敏的短恢复建议，禁止把原始工具输出、命令错误正文或敏感内容刷进 transcript。默认普通滚屏按 append-only 原则工作：Ctrl+O 只将最近块的详情追加到末尾，不可回退光标重绘历史；thinking 同样是稳定事件行，不维护会随 resize 覆盖错位的 live area。
 - inline 流式代码块先显示稳定的 `generating code` 行，结束时追加可折叠代码块；不得依赖 ANSI `moveUp` / `CLEAR_TO_EOS` 回退覆盖已写出的 transcript，避免宽字符换行或异步输出导致 scrollback 错位。
 - 交互期输出应优先走 `Renderer.stream()`；`Main`、`PlanExecuteAgent`、`Planner`、`AgentOrchestrator` 都支持把输出流接到 inline renderer，避免直接争抢 stdout。`/plan` 与 `/team` 的单步直连工具调用还应传入 `Renderer` 本体，复用可折叠工具块；Team 并行批次必须继续写独立缓冲流、按 step_id 顺序 flush，不能从多个 Worker 线程直接调用 renderer。`CodeIndex` 的索引进度通过 `ProgressListener` 注入，`/index` 应绑定到当前 renderer 输出流。
+- `/team` 默认输出采用阶段化摘要：`Planning → Plan ready → Executing n/N → Reviewing → Completed`。Planner 的探索旁白/计划 JSON 与 Reviewer 的审查 JSON 只供 Orchestrator 内部消费，不得写入用户 transcript；Worker 的实际执行输出与折叠工具块保留。Team 专属状态标签使用 ASCII/文字，避免 Windows 字体把 emoji 渲染为问号。
 - Phase 22 开始，`InlineRenderer` 可绑定当前 `LineReader`；当 `LineReader.isReading()` 为 true 时，`Renderer.stream()` 的完整行输出优先通过 `LineReader#printAbove` 显示在输入行上方，未绑定 / 非读取态 / 测试路径回退到原 `PrintStream`。
 - Markdown 表格渲染要按当前终端列宽分配列宽；长内容在单元格内部换行，不能依赖终端自动折行把整行表格打散。
 - Markdown fenced code block 使用轻量词法高亮区分常见关键字、字符串、数字和注释；高亮只能添加 ANSI SGR 样式，必须保持原始代码字符完全不变，未知语言安全退化为原文。

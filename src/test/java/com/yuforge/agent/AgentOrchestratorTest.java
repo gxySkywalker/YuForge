@@ -415,9 +415,9 @@ class AgentOrchestratorTest {
 
         String finalResult = orchestrator.run("测试失败阻塞");
 
-        assertTrue(finalResult.contains("未完全完成"));
-        assertTrue(finalResult.contains("[step_1] ❌ 第一步"));
-        assertTrue(finalResult.contains("[step_2] ⏳ 第二步"));
+        assertTrue(finalResult.contains("finished with failed steps"));
+        assertTrue(finalResult.contains("[step_1] failed · 第一步"));
+        assertTrue(finalResult.contains("[step_2] pending · 第二步"));
     }
 
     private static LlmClient.ChatResponse response(String content) {
