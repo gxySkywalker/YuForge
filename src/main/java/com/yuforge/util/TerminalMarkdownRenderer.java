@@ -27,6 +27,7 @@ public final class TerminalMarkdownRenderer {
     private final StringBuilder pending = new StringBuilder();
     private final List<String> pendingTable = new ArrayList<>();
     private boolean inCodeBlock;
+    private String codeLanguage = "";
     private boolean needsLineBreakBeforeNextBlock;
     private boolean lastOutputBlank;
     private BlockType lastBlockType = BlockType.NONE;
@@ -108,7 +109,7 @@ public final class TerminalMarkdownRenderer {
         }
 
         if (inCodeBlock) {
-            writeLine("    " + line, BlockType.CODE_BLOCK);
+            writeLine("    " + TerminalSyntaxHighlighter.highlight(line, codeLanguage), BlockType.CODE_BLOCK);
             return;
         }
 
@@ -163,10 +164,12 @@ public final class TerminalMarkdownRenderer {
             ensureBlockSpacing();
             String label = language.isBlank() ? "code" : "code: " + language;
             writeLine(AnsiStyle.codeLabel("┌─ " + label), BlockType.CODE_BLOCK);
+            codeLanguage = language;
             inCodeBlock = true;
         } else {
             writeLine(AnsiStyle.codeLabel("└─ end"), BlockType.CODE_BLOCK);
             inCodeBlock = false;
+            codeLanguage = "";
             writeBlankLine();
         }
     }

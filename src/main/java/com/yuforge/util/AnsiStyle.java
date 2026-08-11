@@ -71,6 +71,22 @@ public final class AnsiStyle {
         return wrap(BOLD + YELLOW, text);
     }
 
+    public static String codeKeyword(String text) {
+        return wrap(PURPLE, text);
+    }
+
+    public static String codeString(String text) {
+        return wrap(GREEN, text);
+    }
+
+    public static String codeNumber(String text) {
+        return wrap(YELLOW, text);
+    }
+
+    public static String codeComment(String text) {
+        return wrap(DIM + GRAY, text);
+    }
+
     public static String error(String text) {
         return wrap(BOLD + RED, text);
     }

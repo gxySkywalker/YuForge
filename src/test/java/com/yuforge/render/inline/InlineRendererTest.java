@@ -319,11 +319,38 @@ class InlineRendererTest {
 
             sink.reset();
             renderer.endThinking();
-            assertEquals("", sink.toString(StandardCharsets.UTF_8),
-                    "ending a stable Thinking event must not erase or add transcript rows");
+            String completed = sink.toString(StandardCharsets.UTF_8);
+            assertTrue(completed.contains("Thought for"), completed);
+            assertFalse(completed.contains(AnsiSeq.moveUp(1)), completed);
         } finally {
             renderer.close();
             restoreBottomDockProperty(previous);
+        }
+    }
+
+    @Test
+    void appendOnlyModePrintsStableModelAndWorkspaceFooterBeforeNextInput() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.updateStatus(StatusInfo.active("deepseek-v4-flash", 1_000_000L, true, "running"));
+            renderer.beginThinking("Thinking");
+            renderer.endThinking();
+            renderer.updateStatus(StatusInfo.idle("deepseek-v4-flash", 1_000_000L, true));
+            sink.reset();
+
+            renderer.beforeInput();
+
+            String footer = sink.toString(StandardCharsets.UTF_8);
+            assertTrue(footer.contains("deepseek-v4-flash"), footer);
+            assertTrue(footer.contains(System.getProperty("user.dir")), footer);
+            assertFalse(footer.contains(AnsiSeq.moveUp(1)), footer);
+        } finally {
+            renderer.close();
         }
     }
 

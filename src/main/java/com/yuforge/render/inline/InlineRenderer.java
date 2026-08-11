@@ -11,6 +11,7 @@ import com.yuforge.util.AnsiStyle;
 import org.jline.reader.LineReader;
 import org.jline.reader.Widget;
 import org.jline.terminal.Terminal;
+import org.jline.utils.AttributedString;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Inline 流式渲染器：默认形态。
@@ -43,6 +45,9 @@ public final class InlineRenderer implements Renderer {
     private volatile boolean started;
     private volatile boolean closed;
     private volatile boolean simpleThinkingVisible;
+    private volatile long simpleThinkingStartedNanos;
+    private volatile StatusInfo latestStatus;
+    private volatile boolean turnHadActivity;
 
     // —— 代码块折叠状态机字段（仅供 createTranscriptStream 内部使用）——
     private final StringBuilder lineBuffer = new StringBuilder();
@@ -101,6 +106,10 @@ public final class InlineRenderer implements Renderer {
         if (statusBar != null) {
             statusBar.prepareInputLine();
             statusBar.flushNow();
+        }
+        if (statusBar == null && turnHadActivity && latestStatus != null) {
+            emit(AnsiStyle.subtle(formatTurnFooter(latestStatus)) + "\n");
+            turnHadActivity = false;
         }
     }
 
@@ -170,6 +179,8 @@ public final class InlineRenderer implements Renderer {
             // 进入同一条 transcript，保证它与首个正文/工具卡片严格有序。
             stream.println("· " + (label == null || label.isBlank() ? "Thinking" : label) + "…");
             simpleThinkingVisible = true;
+            simpleThinkingStartedNanos = System.nanoTime();
+            turnHadActivity = true;
         }
     }
 
@@ -190,6 +201,9 @@ public final class InlineRenderer implements Renderer {
         } else if (simpleThinkingVisible) {
             // 普通滚屏只追加、从不回退清除 activity 行；正文会自然出现在其后。
             simpleThinkingVisible = false;
+            long elapsedMillis = Math.max(0L,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - simpleThinkingStartedNanos));
+            stream.println(AnsiStyle.subtle("  Thought for " + formatElapsed(elapsedMillis)));
         }
     }
 
@@ -327,12 +341,32 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void updateStatus(StatusInfo status) {
+        latestStatus = status;
         if (statusBar != null) {
             statusBar.update(status);
         }
         if (activityDisplay != null) {
             activityDisplay.refreshIfActive();
         }
+    }
+
+    private String formatTurnFooter(StatusInfo status) {
+        String model = status.model() == null || status.model().isBlank() ? "Auto Model" : status.model().trim();
+        String cwd = System.getProperty("user.dir", ".");
+        String raw = model + " · " + cwd;
+        AttributedString attributed = new AttributedString(raw);
+        int cols = Math.max(20, terminalColumns() - 1);
+        if (attributed.columnLength(terminal) <= cols) {
+            return raw;
+        }
+        return attributed.columnSubSequence(0, Math.max(1, cols - 3), terminal).toString() + "...";
+    }
+
+    private static String formatElapsed(long elapsedMillis) {
+        if (elapsedMillis < 10_000L) {
+            return String.format(java.util.Locale.ROOT, "%.1fs", elapsedMillis / 1000.0);
+        }
+        return (elapsedMillis / 1000L) + "s";
     }
 
     @Override

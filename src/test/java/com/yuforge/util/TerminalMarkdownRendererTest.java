@@ -38,7 +38,7 @@ class TerminalMarkdownRendererTest {
         assertTrue(rendered.contains("源码"));
         assertTrue(rendered.contains("┌─ code: java"));
         assertTrue(rendered.contains("└─ end"));
-        assertTrue(rendered.contains("    System.out.println(\"hello\");"));
+        assertTrue(stripAnsi(rendered).contains("    System.out.println(\"hello\");"));
     }
 
     @Test
@@ -101,7 +101,12 @@ class TerminalMarkdownRendererTest {
         assertTrue(rendered.contains("| 特性"));
         assertFalse(rendered.contains("https://api.deepseek.com/chat/completions |"));
         for (String line : rendered.split("\\R")) {
-            assertTrue(line.length() <= 72, "line exceeds table width: " + line);
+            String visible = stripAnsi(line);
+            assertTrue(visible.length() <= 72, "line exceeds table width: " + visible);
         }
+    }
+
+    private static String stripAnsi(String value) {
+        return value.replaceAll("\\u001B\\[[;\\d]*m", "");
     }
 }

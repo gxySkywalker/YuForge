@@ -104,6 +104,7 @@ src/main/java/com/yuforge/
 - Windows Terminal 默认 inline composer 不使用 JLine 右提示（resize 后可能留下残影）；首屏 tips 说明 `/`、`@path`、`@image`，`ESC` 仍只清空当前编辑缓冲。任务运行期显示独占行 `Thinking…`，不能覆盖已提交输入；取消后必须在 transcript 给出明确终态。
 - 默认 CLI 启动路径应先 `Renderer.start()` 并初始化底部 dock；inline 首屏不要在 `readLine` 前裸写 stdout，而是通过 `InlineRenderer.installStartupScreen(...)` 挂到 `LineReader.CALLBACK_INIT`，首次进入输入时用 `printAbove` 一次性显示完整 Banner + tips，避免 logo 被 LineReader 首次重绘滚出可视区域。
 - 默认 inline CLI 使用 Codex 风格普通滚屏 composer，不启用 JLine `Status` 底部保留区：Windows Terminal 的缩放、全屏和标签恢复会重排 scrollback，即使单行 Status 也可能留下旧帧。默认以 append-only 的 `Thinking…` 和工具卡片反馈任务进度；实验性 dock 仅可通过 `-Dyuforge.inline.bottom-dock=true` 或 `YUFORGE_INLINE_BOTTOM_DOCK=true` 开启。
+- 默认 append-only 模式的每段 `Thinking…` 结束后追加本段耗时，不回退覆盖活动行；一轮有实际活动后，在下一个 composer 前追加一次 `model · workspace` footer。它是稳定 transcript 事件，不是假装常驻底栏，也不能使用相对光标移动。
 - 信任 preflight 确认后必须先清除该独立页面及其输入回显，再启动 renderer；inline 模式收到 `WINCH` 终端尺寸变化事件后必须重建 JLine `Status`，不能让旧尺寸 dock 残留在新屏幕上。
 - 实验性 dock 必须按终端列宽做信息降级：优先 model、活动阶段、elapsed、cwd；所有宽度计算使用 JLine columnLength/columnSubSequence，不能按 Java `String.length()` 截断 CJK 或 emoji。
 - 普通任务和斜杠命令提交后，JLine 保留本轮原始输入到 scrollback，输入提示为 `>`；默认 inline 不得再用相对光标清除并深色回显该行，否则 resize/CJK 自动换行后可能擦错历史。普通任务随后再展开 MCP resource / 本地 `@path` 并进入 Agent。`/clear` 清空 conversationHistory、shortTermMemory、待注入 Skill buffer 和会话 TODO，并重建不含上一轮检索记忆的 system prompt；长期记忆保留。`/compact` 会手动压缩当前 ReAct conversationHistory，不等待上下文阈值触发，保留最近 1 个 user 轮次和 tool_call/tool_result 边界。
@@ -114,6 +115,7 @@ src/main/java/com/yuforge/
 - 交互期输出应优先走 `Renderer.stream()`；`Main`、`PlanExecuteAgent`、`Planner`、`AgentOrchestrator` 都支持把输出流接到 inline renderer，避免直接争抢 stdout。`/plan` 与 `/team` 的单步直连工具调用还应传入 `Renderer` 本体，复用可折叠工具块；Team 并行批次必须继续写独立缓冲流、按 step_id 顺序 flush，不能从多个 Worker 线程直接调用 renderer。`CodeIndex` 的索引进度通过 `ProgressListener` 注入，`/index` 应绑定到当前 renderer 输出流。
 - Phase 22 开始，`InlineRenderer` 可绑定当前 `LineReader`；当 `LineReader.isReading()` 为 true 时，`Renderer.stream()` 的完整行输出优先通过 `LineReader#printAbove` 显示在输入行上方，未绑定 / 非读取态 / 测试路径回退到原 `PrintStream`。
 - Markdown 表格渲染要按当前终端列宽分配列宽；长内容在单元格内部换行，不能依赖终端自动折行把整行表格打散。
+- Markdown fenced code block 使用轻量词法高亮区分常见关键字、字符串、数字和注释；高亮只能添加 ANSI SGR 样式，必须保持原始代码字符完全不变，未知语言安全退化为原文。
 - ReAct 正常结束后不再把 `📊 Token: ...` 打进正文区；token/cost/elapsed 会保留在底部强状态行，phase 回到 `idle`。
 - 默认 CLI 启动路径应尽早建立 `Terminal -> LineReader -> Renderer`，启动 Banner、模型加载、MCP 启动、Skill summary、ReAct 提示和退出提示都应走 `Renderer.stream()`；除 fatal bootstrap / runtime API / legacy TUI 降级外，不要在交互主路径新增裸 `System.out.println`。
 - 启动期 MCP 不得阻塞首屏：Banner/composer 完成首帧后才在后台初始化，未完成 server 保持 `STARTING`；`/mcp` 查看最新状态。单个后台启动周期仍受 `YUFORGE_MCP_STARTUP_WAIT_SECONDS` / `-Dyuforge.mcp.startup.wait.seconds`（默认 8 秒）约束，超时后连接线程继续完成。
