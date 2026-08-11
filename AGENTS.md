@@ -59,6 +59,8 @@ mvn test -DskipTests=false                  # 全量回归
 
 代码库理解默认走 Claude Code 式实时探索：`glob_files` 找候选文件、`grep_code` 精确定位符号或字符串、`read_file` 按需读取具体行段。`grep_code` 优先使用本机 `ripgrep`，不可用时回退到 Java 扫描；结果受 `max_results` / `head_limit` / `max_chars` 预算约束，返回 `partial: true` 或 `suggested_reads` 时应继续缩小搜索范围或按建议读取行段。`search_code` 是 RAG 语义辅助，适合模糊自然语言、关键词不明确、常规搜索无果、巨型/跨知识检索场景，不作为精确代码定位的首选。`glob_files` / `grep_code` 对模型统一返回 `/` 分隔的项目相对路径；`execute_command` 在 Windows 使用 PowerShell、其他平台使用 bash，并把实际 shell 放入当前 user turn。
 
+RAG 的 `VectorStore` 必须把项目标识规范化为绝对路径后再读写，保证 Windows/Linux 以及相对/绝对入口使用同一索引；索引与检索单元测试使用注入式离线 Embedding stub 和临时数据库，不能依赖本机 Ollama 或外部 API。
+
 MCP 动态工具：`mcp__{server}__{tool}`（+ resources 虚拟工具）
 
 MCP 配置会合并用户级 `~/.yuforge/mcp.json` 与项目级 `.yuforge/mcp.json`；`${VAR}` 支持系统环境变量、系统属性、项目 `.env`、用户 `~/.env`。Windows stdio MCP 启动时必须把 PATH 内无扩展名 launcher（例如 `npx`）解析为 `.cmd`，不能要求用户手改配置；检测到 `STEP_API_KEY` 时会自动内置 `step_search` 远程 MCP（显式同名配置优先）。

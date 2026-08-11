@@ -20,7 +20,7 @@ public class VectorStore implements AutoCloseable {
     private final String projectPath;
 
     public VectorStore(String projectPath) throws SQLException {
-        this.projectPath = projectPath;
+        this.projectPath = normalizeProjectPath(projectPath);
         String dbDir = System.getProperty("yuforge.rag.dir",
                 System.getProperty("user.home") + "/.yuforge/rag");
         java.io.File dir = new java.io.File(dbDir);
@@ -30,6 +30,13 @@ public class VectorStore implements AutoCloseable {
         String dbPath = dir.getAbsolutePath() + "/codebase.db";
         this.connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
         initTables();
+    }
+
+    private static String normalizeProjectPath(String projectPath) {
+        if (projectPath == null || projectPath.isBlank()) {
+            throw new IllegalArgumentException("projectPath 不能为空");
+        }
+        return Path.of(projectPath).toAbsolutePath().normalize().toString();
     }
 
     private void initTables() throws SQLException {
