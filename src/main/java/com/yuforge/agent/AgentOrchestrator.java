@@ -44,6 +44,8 @@ public class AgentOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(AgentOrchestrator.class);
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final int MAX_RETRIES_PER_STEP = 2;
+    private static final int DEFAULT_TEAM_WORKER_COUNT = 2;
+    private static final int MAX_TEAM_WORKER_COUNT = 8;
 
     private final LlmClient llmClient;
     private final SubAgent planner;
@@ -114,10 +116,12 @@ public class AgentOrchestrator {
         memoryManager.setProjectPath(this.toolRegistry.getProjectPath());
         this.toolRegistry.setScopedMemorySaver(memoryManager::storeFact);
         this.planner = new SubAgent("planner", AgentRole.PLANNER, llmClient, toolRegistry);
-        this.workers = List.of(
-                new SubAgent("worker-1", AgentRole.WORKER, llmClient, toolRegistry),
-                new SubAgent("worker-2", AgentRole.WORKER, llmClient, toolRegistry)
-        );
+        int workerCount = teamWorkerCount();
+        List<SubAgent> workerList = new ArrayList<>(workerCount);
+        for (int i = 1; i <= workerCount; i++) {
+            workerList.add(new SubAgent("worker-" + i, AgentRole.WORKER, llmClient, toolRegistry));
+        }
+        this.workers = List.copyOf(workerList);
         this.workers.forEach(worker -> worker.setShowWorkerTranscript(false));
         this.reviewer = new SubAgent("reviewer", AgentRole.REVIEWER, llmClient, toolRegistry);
         if (renderer != null) {
@@ -288,7 +292,8 @@ public class AgentOrchestrator {
                 idMapping.put(originalId, newId);
 
                 String description = stepNode.path("description").asText();
-                String type = stepNode.path("type").asText("COMMAND");
+                // 归一化大写；缺省视为 COMMAND（写/执行类，保守走 reviewer 门控）
+                String type = stepNode.path("type").asText("COMMAND").toUpperCase(Locale.ROOT);
                 steps.add(ExecutionStep.pending(newId, description, type, new ArrayList<>()));
             }
 
@@ -510,8 +515,10 @@ public class AgentOrchestrator {
 
             completions.submit(() -> {
                 SubAgent worker = null;
-                SubAgent localReviewer = new SubAgent(
-                        "reviewer-" + step.id(), AgentRole.REVIEWER, llmClient, toolRegistry);
+                // 只读/分析/验证步骤不建 reviewer（runStep 内直接通过），省一次 prompt 组装与 LLM 往返
+                SubAgent localReviewer = isMutatingStep(step)
+                        ? new SubAgent("reviewer-" + step.id(), AgentRole.REVIEWER, llmClient, toolRegistry)
+                        : null;
                 try {
                     worker = workerPool.take();
                     runStep(step, steps, retryCount, worker, localReviewer, context, stepOut);
@@ -581,6 +588,27 @@ public class AgentOrchestrator {
     }
 
     /**
+     * 步骤是否改变系统状态。只有改变状态的步骤才需要 reviewer 质量门；
+     * 只读 / 分析 / 验证类步骤由 worker 结果直接通过，省掉每次 review 的 LLM 往返。
+     */
+    private static boolean isMutatingStep(ExecutionStep step) {
+        return "FILE_WRITE".equals(step.type()) || "COMMAND".equals(step.type());
+    }
+
+    private static int teamWorkerCount() {
+        String raw = System.getenv("TEAM_WORKER_COUNT");
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_TEAM_WORKER_COUNT;
+        }
+        try {
+            int count = Integer.parseInt(raw.trim());
+            return Math.max(1, Math.min(count, MAX_TEAM_WORKER_COUNT));
+        } catch (NumberFormatException e) {
+            return DEFAULT_TEAM_WORKER_COUNT;
+        }
+    }
+
+    /**
      * 执行单个步骤（Worker 执行 + Reviewer 审查 + 最多 2 次重试）。
      *
      * 此方法被串行和并行两条路径共享，通过 {@code out} 控制流式输出目的地。
@@ -615,6 +643,13 @@ public class AgentOrchestrator {
         if (result.content() == null || result.content().isBlank()) {
             updateStep(steps, step.id(), step.withFailed("执行结果为空"));
             out.println(AnsiStyle.error("  失败 [" + step.id() + "] · 结果为空") + "\n");
+            return;
+        }
+
+        // 只读 / 分析 / 验证类步骤不改变系统状态，直接以 worker 结果通过，跳过 reviewer 的 LLM 往返
+        if (!isMutatingStep(step) || reviewer == null) {
+            updateStep(steps, step.id(), step.withResult(result.content()));
+            out.println(AnsiStyle.success("  完成 · " + progress) + "\n");
             return;
         }
 

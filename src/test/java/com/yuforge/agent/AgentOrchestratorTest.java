@@ -326,7 +326,7 @@ class AgentOrchestratorTest {
         StubGLMClient llmClient = new StubGLMClient(List.of(
                 response("""
                         {"summary":"单步任务","steps":[
-                          {"id":"s1","description":"检查缓存实现并给出结论","type":"ANALYSIS","dependencies":[]}
+                          {"id":"s1","description":"检查缓存实现并给出结论","type":"COMMAND","dependencies":[]}
                         ]}
                         """),
                 response("WORKER_INTERNAL_NARRATIVE：这里是很长的中间分析正文"),
@@ -348,6 +348,68 @@ class AgentOrchestratorTest {
         assertTrue(transcript.contains("完成 · 1/1"), transcript);
         assertFalse(transcript.contains("WORKER_INTERNAL_NARRATIVE"), transcript);
         assertTrue(finalResult.contains("WORKER_INTERNAL_NARRATIVE"), finalResult);
+    }
+
+    @Test
+    void shouldSkipReviewerForReadOnlySteps(@TempDir Path tempDir) {
+        StubGLMClient llmClient = new StubGLMClient(List.of(
+                response("""
+                        {"summary":"分析任务","steps":[
+                          {"id":"s1","description":"分析实现","type":"ANALYSIS","dependencies":[]}
+                        ]}
+                        """),
+                response("分析结论：实现正确")));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AgentOrchestrator orchestrator = new AgentOrchestrator(
+                llmClient,
+                new ToolRegistry(),
+                new NoOpMemoryManager(tempDir.toFile()),
+                new PrintStream(output, true, StandardCharsets.UTF_8));
+
+        String finalResult = orchestrator.run("分析实现");
+        String transcript = output.toString(StandardCharsets.UTF_8);
+
+        assertTrue(transcript.contains("执行者 worker-1 · 1/1"), transcript);
+        assertFalse(transcript.contains("审查者"), transcript);
+        assertTrue(transcript.contains("完成 · 1/1"), transcript);
+        assertTrue(finalResult.contains("分析结论：实现正确"), finalResult);
+    }
+
+    @Test
+    void shouldStillReviewWritingSteps(@TempDir Path tempDir) {
+        StubGLMClient llmClient = new StubGLMClient(List.of(
+                response("""
+                        {"summary":"写入任务","steps":[
+                          {"id":"s1","description":"写文件","type":"FILE_WRITE","dependencies":[]}
+                        ]}
+                        """),
+                response("文件已写入"),
+                response("{\"approved\":true,\"summary\":\"通过\",\"issues\":[]}")));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        AgentOrchestrator orchestrator = new AgentOrchestrator(
+                llmClient,
+                new ToolRegistry(),
+                new NoOpMemoryManager(tempDir.toFile()),
+                new PrintStream(output, true, StandardCharsets.UTF_8));
+
+        orchestrator.run("写入文件");
+        String transcript = output.toString(StandardCharsets.UTF_8);
+
+        assertTrue(transcript.contains("审查者 reviewer · 1/1"), transcript);
+        assertTrue(transcript.contains("完成 · 1/1"), transcript);
+    }
+
+    @Test
+    void shouldNormalizeStepTypeUppercase() {
+        AgentOrchestrator orchestrator = new AgentOrchestrator(new GLMClient("test-key"));
+        String planJson = """
+                {"summary":"t","steps":[
+                  {"id":"s1","description":"分析","type":"analysis","dependencies":[]}
+                ]}
+                """;
+
+        List<AgentOrchestrator.ExecutionStep> steps = orchestrator.parsePlan(planJson);
+        assertEquals("ANALYSIS", steps.get(0).type());
     }
 
     @Test
