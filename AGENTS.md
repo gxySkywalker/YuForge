@@ -261,6 +261,8 @@ src/main/java/com/yuforge/
 | RAG | `mvn test -Dtest=CodeChunkerTest,CodeAnalyzerTest,VectorStoreTest,CodeIndexTest` |
 | 常规回归 | `mvn test -Pquick` |
 
+Surefire 测试 JVM 默认设置 `yuforge.snapshot.enabled=false`，禁止 Agent/ToolRegistry 测试在开发者真实仓库生成 Side-Git 快照提交；`SideGitManagerTest` 必须使用 `@TempDir` 和显式启用的 `SnapshotConfig` 验证快照能力。测试不得移除此隔离边界。
+
 ## 给新线程的导航
 
 1. 先看本文件 → 2. `README.md` → 3. `Main.java` → 4. 按任务进入对应模块
