@@ -8,6 +8,10 @@
 ![Maven](https://img.shields.io/badge/build-Maven-C71A36?logo=apachemaven&logoColor=white)
 ![MCP](https://img.shields.io/badge/protocol-MCP-7C3AED)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-4B8BBE)
+![Release](https://img.shields.io/github/v/release/gxySkywalker/YuForge?color=4B8BBE&logo=github)
+![Downloads](https://img.shields.io/github/downloads/gxySkywalker/YuForge/total?color=2E8B57)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Last Commit](https://img.shields.io/github/last-commit/gxySkywalker/YuForge?color=8A2BE2)
 
 [快速开始](#快速开始) · [核心能力](#核心能力) · [MCP](#mcp) · [架构](#架构概览) · [安全边界](#安全边界) · [贡献与验证](#开发与验证)
 
@@ -25,7 +29,7 @@
 
 ## 核心能力
 
-- **Code Agent Runtime**：ReAct 为默认执行路径；复杂任务可切换 `/plan` 或 `/team`。Team Planner 会先用有界只读工具理解工作区，再输出 DAG 计划；格式异常时自动修复一次，写入与命令只交给 Worker。终端默认只展示 Planner / Worker / Reviewer 角色状态、工具证据、失败原因与最终结果；三类角色的内部旁白和协议 JSON 不重复进入正文。
+- **Code Agent Runtime**：ReAct 为默认执行路径；复杂任务可切换 `/plan` 或 `/team`。Team Planner 会先用有界只读工具理解工作区，再输出 DAG 计划；格式异常时自动修复一次，写入与命令只交给 Worker。Reviewer 只作为写文件 / 执行命令步骤的质量门，只读与分析步骤直接以 Worker 结果通过，避免审查类任务被逐主题拆解并叠加多步 LLM 乘法开销。终端默认只展示 Planner / Worker / Reviewer 角色状态、工具证据、失败原因与最终结果；三类角色的内部旁白和协议 JSON 不重复进入正文。Worker 并发数可通过 `TEAM_WORKER_COUNT` 环境变量配置（默认 2，上限 8）。
 - **真实代码库探索**：`glob_files → grep_code → read_file` 的实时探索路径；RAG 仅作为模糊语义检索补充。
 - **长上下文与记忆**：工具结果归档恢复、结构化压缩、项目级 `YUFORGE.md`、长期记忆和 checkpoint 会话恢复。
 - **安全工具调用**：工作区信任、HITL、PathGuard、CommandGuard、审计日志与 Prompt Injection 防护。
@@ -35,6 +39,19 @@
 - **可感知的工具进度**：构建、测试和命令执行期间按真实完成事件显示 `0/N → 1/N → N/N` 与动态耗时，完成后保留终态；`/team` 的并行步骤也持续显示 `completed/total`，Worker 详情仍按计划顺序输出；任务运行时可用 `Ctrl+O` 原地展开或收起最近工具详情，执行计时不会消失。
 - **MCP 与浏览器**：stdio / Streamable HTTP MCP、动态工具与 resources、Chrome DevTools MCP。
 - **稳定 CLI**：JLine 命令补全、可取消任务、折叠工具摘要和跨平台 `yuforge` 命令；提交后立即显示 Thinking，结束保留分段耗时，代码块轻量语法高亮，每轮以 `model · workspace` footer 收束。
+
+## 量化验证
+
+上下文治理与工具系统的收益用真实回归测试度量（`ContextCompressionBenchmarkTest`、`ToolDefinitionOverheadTest`，本地可复现）：
+
+| 场景 | 治理前 | 治理后 | 说明 |
+| --- | --- | --- | --- |
+| 工具结果密集会话（80 轮，大文件读取 / grep） | 148,292 tokens | 22,705 tokens | **-84.7%**；77 个大型工具结果归档到 artifact store，可按 `artifact_id` 无损恢复 |
+| 分析对话密集会话（60 轮，无可归档大结果） | 124,903 tokens | 6,444 tokens | **-94.8%**；结构化检查点压缩 + 保留最近 3 轮 |
+| 同一 80 轮长任务的累计模拟 | 无压缩在第 72 轮超出 128K 窗口、任务中断 | 80 轮完整执行 | 治理触发点单次输入峰值 114,938 → 18,931（-84%）；延长到 500 轮全程不超窗，历史保持有界 |
+| 26 个内置工具全量进每轮请求 | — | 2,828 tokens / 轮 | 固定开销仅占 128K 窗口 **2.2%**（核心循环 7 个工具 992 + 外围 19 个 1,836） |
+
+语境：治理的价值是**防止长任务超窗中断**与**降低单次调用的输入 / 延迟**——同一任务两世界的累计输入量相差约 9%，真正无界增长的是每轮重发的历史，治理把它维持在窗口内有界，且工具结果无损可恢复。
 
 ## 快速开始
 
@@ -243,12 +260,14 @@ mvn test -DskipTests=false
 mvn clean package
 ```
 
-推送 `v*` tag 会触发 GitHub Actions，自动发布 shaded jar、SHA-256 与两类安装脚本：
+推送 `v*` tag 会触发 GitHub Actions，自动构建 shaded jar 并发布 Release（含 SHA-256 校验文件与 Windows / macOS / Linux 安装脚本）：
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.1.0
+git push origin v1.1.0
 ```
+
+版本号由 tag 驱动：`pom.xml` 保持 `1.0-SNAPSHOT` 不变，Release 产物按 `yuforge-{tag}.jar` 命名，安装脚本中的下载地址由工作流自动替换为对应版本的不可变 URL。
 
 ## 文档
 
