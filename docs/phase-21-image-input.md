@@ -40,6 +40,7 @@
   - 支持 `@image:file:///abs/path.png`
   - 支持 `@image:/abs/path.png` / `@image:relative/path.png`
   - 支持 `@image:<file:///path with spaces.png>`
+  - Windows 同时兼容 `file://C:\path\image.png`、`file://C:/path/image.png`、未编码空格、中文路径和 `%20` 编码路径
   - 接受 `image/*` MIME；处理后的单图 base64 必须不超过 5MB
 
 ## 当前边界

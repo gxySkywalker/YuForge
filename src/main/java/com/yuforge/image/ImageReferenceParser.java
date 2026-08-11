@@ -155,6 +155,11 @@ public class ImageReferenceParser {
     // 其他字符（包括空格、中文、未编码字节）原样保留。
     private static String fileUriToLocalPath(String value) {
         String afterScheme = value.substring("file://".length());
+        // Windows 常见输入是 file://C:\path 或 file://C:/path。这里的 C: 是盘符，
+        // 不是 URI authority；给它补前导 / 会得到无法访问的 /C:\path。
+        if (isWindowsDrivePath(afterScheme)) {
+            return percentDecodeUtf8(afterScheme);
+        }
         String pathPart;
         if (afterScheme.startsWith("/")) {
             pathPart = afterScheme;
@@ -163,6 +168,13 @@ public class ImageReferenceParser {
             pathPart = slashIdx < 0 ? "/" + afterScheme : afterScheme.substring(slashIdx);
         }
         return percentDecodeUtf8(pathPart);
+    }
+
+    private static boolean isWindowsDrivePath(String value) {
+        return value.length() >= 3
+                && Character.isLetter(value.charAt(0))
+                && value.charAt(1) == ':'
+                && (value.charAt(2) == '/' || value.charAt(2) == '\\');
     }
 
     private static String percentDecodeUtf8(String s) {
