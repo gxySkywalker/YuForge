@@ -355,6 +355,20 @@ class InlineRendererTest {
     }
 
     @Test
+    void inlineTranscriptKeepsSuccessfulToolResultsInsideCollapsedDensityBoundary() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("xterm-256color");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(120, 40));
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        try {
+            assertFalse(renderer.rendersSuccessfulToolResultSummaries());
+        } finally {
+            renderer.close();
+        }
+    }
+
+    @Test
     void activityPanelUsesSingleLineWithoutRewritingTranscript() {
         String previous = System.getProperty("yuforge.inline.bottom-dock");
         System.setProperty("yuforge.inline.bottom-dock", "true");

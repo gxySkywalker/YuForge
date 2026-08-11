@@ -24,6 +24,7 @@ import com.yuforge.util.AnsiStyle;
 import com.yuforge.tool.ToolRegistry;
 import com.yuforge.tool.ToolRegistry.ToolExecutionResult;
 import com.yuforge.tool.ToolRegistry.ToolInvocation;
+import com.yuforge.tool.ToolResultDiagnostic;
 import com.yuforge.util.TerminalMarkdownRenderer;
 import com.yuforge.image.ImageReferenceParser;
 import org.slf4j.Logger;
@@ -686,6 +687,12 @@ public class PlanExecuteAgent {
         for (ToolExecutionResult result : results) {
             log.debug("Task {} tool result preview [{}]: {}", taskId, result.name(), preview(result.result(), 300));
             if (out != null) {
+                if (renderer != null && out == renderer.stream()
+                        && !renderer.rendersSuccessfulToolResultSummaries()
+                        && (result.diagnostic() == null
+                        || result.diagnostic().status() == ToolResultDiagnostic.Status.SUCCESS)) {
+                    continue;
+                }
                 String summary = ToolResultSummary.format(result);
                 if (!summary.isBlank()) {
                     out.println(AnsiStyle.subtle("  → " + summary));

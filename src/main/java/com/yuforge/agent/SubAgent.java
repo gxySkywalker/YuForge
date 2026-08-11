@@ -400,7 +400,11 @@ public class SubAgent {
         List<ToolExecutionResult> results = toolRegistry.executeTools(invocations);
         for (ToolExecutionResult result : results) {
             String summary = ToolResultSummary.format(result);
-            if (out != null && !summary.isBlank()) {
+            boolean suppressSuccess = renderer != null && out == renderer.stream()
+                    && !renderer.rendersSuccessfulToolResultSummaries()
+                    && (result.diagnostic() == null
+                    || result.diagnostic().status() == ToolResultDiagnostic.Status.SUCCESS);
+            if (out != null && !suppressSuccess && !summary.isBlank()) {
                 out.println(AnsiStyle.subtle("  → " + summary));
             }
         }

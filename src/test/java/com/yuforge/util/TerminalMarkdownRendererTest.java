@@ -98,12 +98,31 @@ class TerminalMarkdownRendererTest {
 
         String rendered = TerminalMarkdownRenderer.render(markdown, 72);
 
-        assertTrue(rendered.contains("| 特性"));
+        assertTrue(rendered.contains("- 基础 URL"));
+        assertTrue(rendered.contains("StepFun (Step):"));
         assertFalse(rendered.contains("https://api.deepseek.com/chat/completions |"));
         for (String line : rendered.split("\\R")) {
             String visible = stripAnsi(line);
             assertTrue(visible.length() <= 72, "line exceeds table width: " + visible);
         }
+    }
+
+    @Test
+    void degradesPathHeavyTableToRecordsInsteadOfVerticalCharacters() {
+        String markdown = """
+                | 路径 | 数量 | 内容 |
+                | --- | --- | --- |
+                | src/main/java/com/hmdp/controller | 9 | BlogController, FollowController, ShopController |
+                | src/main/java/com/hmdp/service/impl | 10 | BlogServiceImpl, ShopServiceImpl, UserServiceImpl |
+                """;
+
+        String rendered = TerminalMarkdownRenderer.render(markdown, 48);
+
+        assertTrue(rendered.contains("- src/main/java/com/hmdp/controller"), rendered);
+        assertTrue(rendered.contains("数量: 9"), rendered);
+        assertTrue(rendered.contains("内容: BlogController"), rendered);
+        assertFalse(rendered.contains("| src/"), rendered);
+        assertFalse(rendered.contains("| s    |"), rendered);
     }
 
     private static String stripAnsi(String value) {

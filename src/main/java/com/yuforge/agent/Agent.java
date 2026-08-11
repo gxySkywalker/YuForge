@@ -26,6 +26,7 @@ import com.yuforge.util.AnsiStyle;
 import com.yuforge.tool.ToolRegistry;
 import com.yuforge.tool.ToolRegistry.ToolExecutionResult;
 import com.yuforge.tool.ToolRegistry.ToolInvocation;
+import com.yuforge.tool.ToolResultDiagnostic;
 import com.yuforge.util.TerminalMarkdownRenderer;
 import com.yuforge.image.ImageReferenceParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -768,10 +769,18 @@ public class Agent {
     }
 
     private void emitToolResultSummary(ToolExecutionResult result) {
+        if (isSuccessfulToolResult(result) && !renderer().rendersSuccessfulToolResultSummaries()) {
+            return;
+        }
         String summary = ToolResultSummary.format(result);
         if (!summary.isBlank()) {
             renderer().stream().println(AnsiStyle.subtle("  → " + summary));
         }
+    }
+
+    private static boolean isSuccessfulToolResult(ToolExecutionResult result) {
+        return result != null && (result.diagnostic() == null
+                || result.diagnostic().status() == ToolResultDiagnostic.Status.SUCCESS);
     }
 
     private String webSearchSummary(ToolExecutionResult result) {

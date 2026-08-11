@@ -340,6 +340,11 @@ public final class InlineRenderer implements Renderer {
     }
 
     @Override
+    public boolean rendersSuccessfulToolResultSummaries() {
+        return false;
+    }
+
+    @Override
     public void appendDiff(String filePath, String before, String after) {
         new InlineDiffRenderer(out).render(filePath, before, after);
     }

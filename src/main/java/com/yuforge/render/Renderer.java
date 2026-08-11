@@ -124,6 +124,16 @@ public interface Renderer extends AutoCloseable {
     void appendToolCalls(List<LlmClient.ToolCall> toolCalls);
 
     /**
+     * 是否在折叠工具卡片之外逐条显示成功结果。
+     *
+     * <p>普通 inline transcript 默认关闭，避免“已折叠”的工具批次下面继续铺满成功明细；
+     * 错误、超时和策略拒绝仍始终显示。plain/TUI 保持原有详细输出。
+     */
+    default boolean rendersSuccessfulToolResultSummaries() {
+        return true;
+    }
+
+    /**
      * 渲染一个文件 diff 块。
      *
      * @param filePath 文件路径

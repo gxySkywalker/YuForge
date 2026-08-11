@@ -219,6 +219,11 @@ public final class TerminalMarkdownRenderer {
                 naturalWidths[i] = Math.max(naturalWidths[i], maxDisplayWidth(cell));
             }
         }
+        if (shouldRenderAsRecordList(naturalWidths, columnCount)) {
+            renderRecordTable(rows, columnCount);
+            writeBlankLine();
+            return;
+        }
         int[] widths = allocateTableWidths(rows, naturalWidths, columnCount);
 
         String border = buildTableBorder(widths);
@@ -249,6 +254,55 @@ public final class TerminalMarkdownRenderer {
         }
         writeLine(AnsiStyle.subtle(border), BlockType.TABLE);
         writeBlankLine();
+    }
+
+    private boolean shouldRenderAsRecordList(int[] naturalWidths, int columnCount) {
+        if (columnCount < 3) {
+            return false;
+        }
+        int available = Math.max(1, terminalColumns() - (columnCount * 3 + 1));
+        int fairWidth = available / columnCount;
+        if (columnCount >= 5 || fairWidth < 12) {
+            return true;
+        }
+        int longCells = 0;
+        for (int width : naturalWidths) {
+            if (width > Math.max(24, fairWidth * 2)) {
+                longCells++;
+            }
+        }
+        return longCells > 0;
+    }
+
+    private void renderRecordTable(List<List<String>> rows, int columnCount) {
+        List<String> headers = rows.get(0);
+        int contentWidth = Math.max(16, terminalColumns() - 4);
+        for (int rowIndex = 1; rowIndex < rows.size(); rowIndex++) {
+            List<String> row = rows.get(rowIndex);
+            String primary = row.isEmpty() ? "" : sanitizeInline(row.get(0));
+            writeWrappedRecordLine("- ", primary, contentWidth, BlockType.TABLE);
+            for (int column = 1; column < columnCount; column++) {
+                String value = column < row.size() ? sanitizeInline(row.get(column)) : "";
+                if (value.isBlank()) {
+                    continue;
+                }
+                String header = column < headers.size() ? sanitizeInline(headers.get(column)) : "列 " + (column + 1);
+                String prefix = "  " + header + ": ";
+                writeWrappedRecordLine(prefix, value,
+                        Math.max(12, terminalColumns() - displayWidth(prefix)), BlockType.TABLE);
+            }
+            if (rowIndex < rows.size() - 1) {
+                writeBlankLine();
+            }
+        }
+    }
+
+    private void writeWrappedRecordLine(String prefix, String value, int width, BlockType type) {
+        List<String> parts = wrapCell(value, width);
+        String continuation = " ".repeat(Math.max(0, displayWidth(prefix)));
+        for (int i = 0; i < parts.size(); i++) {
+            writeLine((i == 0 ? prefix : continuation) + parts.get(i), type);
+        }
     }
 
     private boolean shouldRenderAsKeyValue(List<List<String>> rows) {
