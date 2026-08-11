@@ -28,7 +28,7 @@ final class ToolResultSummary {
             return "[warn] " + action + "超时，已取消" + elapsed(elapsed);
         }
         if (diagnostic != null && diagnostic.code() == ToolResultDiagnostic.ErrorCode.INTERRUPTED) {
-            return "⏹ " + action + "已取消" + elapsed(elapsed);
+            return "[stop] " + action + "已取消" + elapsed(elapsed);
         }
         if (diagnostic != null && diagnostic.failed()) {
             return "[warn] " + action + "失败 (" + diagnostic.code() + ")" + elapsed(elapsed)

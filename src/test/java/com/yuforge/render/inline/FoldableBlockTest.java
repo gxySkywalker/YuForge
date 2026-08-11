@@ -18,11 +18,11 @@ class FoldableBlockTest {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         FoldableBlock block = new FoldableBlock(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
-                "⏵ 读取 3 个文件 (ctrl+o to expand)",
-                List.of("  📖 line 1", "  └ a.txt", "  └ b.txt", "  └ c.txt"));
+                "[+] 读取 3 个文件 (ctrl+o to expand)",
+                List.of("  line 1", "  └ a.txt", "  └ b.txt", "  └ c.txt"));
         block.renderInitial();
         String text = sink.toString(StandardCharsets.UTF_8);
-        assertTrue(text.contains("⏵ 读取 3 个文件"), text);
+        assertTrue(text.contains("[+] 读取 3 个文件"), text);
         assertEquals(1, block.renderedLineCount());
         assertFalse(block.isExpanded());
     }
@@ -32,8 +32,8 @@ class FoldableBlockTest {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         FoldableBlock block = new FoldableBlock(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
-                "⏵ Read 2 files (ctrl+o to expand)",
-                List.of("  📖 line A", "  📖 line B"));
+                "[+] Read 2 files (ctrl+o to expand)",
+                List.of("  line A", "  line B"));
         block.renderInitial();
         sink.reset();
         boolean ok = block.toggle();
@@ -43,7 +43,7 @@ class FoldableBlockTest {
         assertTrue(text.contains("[1A"), "should move up to overwrite: " + text);
         assertTrue(text.contains("line A"));
         assertTrue(text.contains("line B"));
-        assertTrue(text.contains("⏷ collapse"));
+        assertTrue(text.contains("[-] collapse"));
     }
 
     @Test
@@ -51,7 +51,7 @@ class FoldableBlockTest {
         ByteArrayOutputStream sink = new ByteArrayOutputStream();
         FoldableBlock block = new FoldableBlock(
                 new PrintStream(sink, true, StandardCharsets.UTF_8),
-                "⏵ header",
+                "[+] header",
                 List.of("expanded line"));
         block.renderInitial();
         block.toggle();  // expanded
@@ -101,7 +101,7 @@ class FoldableBlockTest {
         sink.reset();
         block.toggle();
         String text = sink.toString(StandardCharsets.UTF_8);
-        assertFalse(text.contains("⏷"));
+        assertFalse(text.contains("[-]"));
         assertEquals(2, block.renderedLineCount());
     }
 }

@@ -47,7 +47,7 @@ class CodeIndexTest {
         CodeIndex.IndexResult result = indexer.index("src/test/resources/rag");
 
         assertTrue(result.chunkCount() > 0, "应该至少索引一个代码块");
-        assertTrue(messages.stream().anyMatch(message -> message.startsWith("🔍 开始索引")));
+        assertTrue(messages.stream().anyMatch(message -> message.startsWith("开始索引")));
         assertTrue(messages.stream().anyMatch(message -> message.startsWith("📁 发现")));
         assertTrue(messages.stream().anyMatch(message -> message.startsWith("✅ 索引完成")));
     }

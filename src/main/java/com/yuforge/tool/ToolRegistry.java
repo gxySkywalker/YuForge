@@ -987,7 +987,7 @@ public class ToolRegistry {
                         throw new PolicyException("写入 global 长期记忆需要用户在本轮明确说明“全局/跨项目/所有项目”");
                     }
                     memorySaver.accept(normalized, scope);
-                    return "💾 已保存到长期记忆(" + scope + "): " + normalized;
+                    return "[ok] 已保存到长期记忆(" + scope + "): " + normalized;
                 }
         ));
         tools.put("read_tool_artifact", new Tool(
@@ -1151,12 +1151,12 @@ public class ToolRegistry {
                     "top_k", "topK", "max_results", "num_results", "limit", "count");
             ToolOutput output = executeToolOutput(STEP_SEARCH_TOOL, args.toString());
             if (isUsableMcpOutput(output)) {
-                return "🔍 [StepSearch] " + query.trim() + "\n\n" + output.text().trim();
+                return "[StepSearch] " + query.trim() + "\n\n" + output.text().trim();
             }
         }
         SearchProvider provider = searchProvider();
         if (!provider.isReady()) {
-            return "⚠️ " + provider.unavailableHint();
+            return "[warn] " + provider.unavailableHint();
         }
         try {
             List<SearchResult> results = provider.search(query.trim(), topK);
@@ -1178,10 +1178,10 @@ public class ToolRegistry {
 
     private String formatSearchResults(String providerName, String query, List<SearchResult> results) {
         if (results == null || results.isEmpty()) {
-            return "🔍 [" + providerName + "] " + query + "\n\n未找到相关结果。";
+            return "[" + providerName + "] " + query + "\n\n未找到相关结果。";
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("🔍 [").append(providerName).append("] ").append(query).append("\n\n");
+        sb.append("[").append(providerName).append("] ").append(query).append("\n\n");
         for (SearchResult r : results) {
             sb.append(r.position()).append(". ").append(r.title()).append("\n");
             if (!r.snippet().isBlank()) {
@@ -1192,7 +1192,7 @@ public class ToolRegistry {
                 sb.append("   ").append(snippet).append("\n");
             }
             if (!r.url().isBlank()) {
-                sb.append("   🔗 ").append(r.url());
+                sb.append("   ").append(r.url());
                 if (!r.source().isBlank()) {
                     sb.append("  (").append(r.source()).append(")");
                 }
@@ -1210,11 +1210,11 @@ public class ToolRegistry {
         NetworkPolicy policy = networkPolicy();
         String denyReason = policy.checkUrl(url);
         if (denyReason != null) {
-            return "❌ 网络访问被拒绝: " + denyReason;
+            return "[error] 网络访问被拒绝: " + denyReason;
         }
         String rateReason = policy.acquire();
         if (rateReason != null) {
-            return "❌ " + rateReason;
+            return "[error] " + rateReason;
         }
         if (shouldPreferStepSearch() && tools.containsKey(STEP_FETCH_TOOL)) {
             ObjectNode args = mapper.createObjectNode();
@@ -1223,7 +1223,7 @@ public class ToolRegistry {
                     "max_chars", "maxChars", "limit", "max_length", "maxLength");
             ToolOutput output = executeToolOutput(STEP_FETCH_TOOL, args.toString());
             if (isUsableMcpOutput(output)) {
-                return "🌐 [StepSearch] 抓取: " + url.trim() + "\n\n" + output.text().trim();
+                return "[StepSearch] 抓取: " + url.trim() + "\n\n" + output.text().trim();
             }
         }
 
@@ -1271,7 +1271,7 @@ public class ToolRegistry {
         }
         String text = output.text().trim();
         return !text.startsWith("[HITL]")
-                && !text.startsWith("🛡️")
+                && !text.startsWith("[policy]")
                 && !text.startsWith("工具执行失败")
                 && !text.startsWith("未知工具")
                 && !text.startsWith("MCP 工具返回错误");
@@ -1279,15 +1279,15 @@ public class ToolRegistry {
 
     private String formatFetchResult(FetchResult result) {
         StringBuilder sb = new StringBuilder();
-        sb.append("🌐 抓取: ").append(result.url()).append("\n");
+        sb.append("抓取: ").append(result.url()).append("\n");
         if (!result.title().isBlank()) {
-            sb.append("📄 标题: ").append(result.title()).append("\n");
+            sb.append("标题: ").append(result.title()).append("\n");
         }
         if (result.bodyEmpty()) {
-            sb.append("\n⚠️ ").append(result.hint()).append("\n");
+            sb.append("\n[warn] ").append(result.hint()).append("\n");
             return sb.toString();
         }
-        sb.append("📏 正文 ").append(result.contentLength()).append(" 字符");
+        sb.append("正文 ").append(result.contentLength()).append(" 字符");
         if (result.truncated()) {
             sb.append("（已截断）");
         }
@@ -1415,7 +1415,7 @@ public class ToolRegistry {
             if (shouldAudit) {
                 auditLog.record(AuditLog.AuditEntry.denyByPolicy(name, argumentsJson, reason, 0, null));
             }
-            return ToolOutput.text("🛡️ 策略拒绝: " + reason);
+            return ToolOutput.text("[policy] 策略拒绝: " + reason);
         }
         Tool tool = tools.get(name);
         if (tool == null) {
@@ -1465,7 +1465,7 @@ public class ToolRegistry {
                 auditLog.record(AuditLog.AuditEntry.denyByPolicy(
                         name, argumentsJson, e.getMessage(), elapsedMillis(start), auditMetadata));
             }
-            return ToolOutput.text("🛡️ 策略拒绝: " + e.getMessage());
+            return ToolOutput.text("[policy] 策略拒绝: " + e.getMessage());
         } catch (Exception e) {
             if (shouldAudit) {
                 auditLog.record(AuditLog.AuditEntry.error(

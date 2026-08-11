@@ -130,7 +130,7 @@ public final class InlineRenderer implements Renderer {
             statusBar.flushNow();
         }
         if (statusBar == null && turnHadActivity && latestStatus != null) {
-            emit(AnsiStyle.muted(formatTurnFooter(latestStatus)) + "\n");
+            emit(AnsiStyle.muted(formatTurnFooter(latestStatus)) + "\n\n");
             turnHadActivity = false;
         }
     }
@@ -645,7 +645,7 @@ public final class InlineRenderer implements Renderer {
 
                 String label = codeLanguage.isEmpty() ? "code" : "code: " + codeLanguage;
                 String collapsedHeader = AnsiStyle.subtle(
-                        "⏵ " + label + " (" + bodyLineCount + " 行, ctrl+o to expand)");
+                        "[+] " + label + " (" + bodyLineCount + " 行, ctrl+o to expand)");
 
                 List<String> expandedLines = new ArrayList<>();
                 expandedLines.add(stripTrailingNewline(codeHeaderLine));
@@ -654,7 +654,7 @@ public final class InlineRenderer implements Renderer {
                 }
                 expandedLines.add(stripTrailingNewline(line));
 
-                FoldableBlock block = new FoldableBlock(out, collapsedHeader, expandedLines, "⏷ collapse (ctrl+o)");
+                FoldableBlock block = new FoldableBlock(out, collapsedHeader, expandedLines, "[-] collapse (ctrl+o)");
                 blockRegistry.register(block);
 
                 transcript.add(new BlockEntry(block));

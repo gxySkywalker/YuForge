@@ -207,7 +207,7 @@ class InlineRendererTest {
             String pending = renderedEvents.get(0);
             String rendered = renderedEvents.get(1);
             assertTrue(pending.contains("generating code: bash"), pending);
-            assertTrue(rendered.contains("⏵"), rendered);
+            assertTrue(rendered.contains("[+]"), rendered);
             assertTrue(rendered.contains("code: bash"), rendered);
             assertTrue(rendered.contains("1 行"), rendered);
             assertFalse(rendered.contains("echo hi"), rendered);
@@ -234,7 +234,7 @@ class InlineRendererTest {
 
             String emitted = sink.toString(StandardCharsets.UTF_8);
             assertTrue(emitted.contains("generating code: bash"), emitted);
-            assertTrue(emitted.contains("⏵ code: bash (1 行"), emitted);
+            assertTrue(emitted.contains("[+] code: bash (1 行"), emitted);
             assertFalse(emitted.contains(AnsiSeq.moveUp(1)), emitted);
             assertFalse(emitted.contains(AnsiSeq.CLEAR_TO_EOS), emitted);
         } finally {
@@ -624,7 +624,7 @@ class InlineRendererTest {
             renderer.stream().println("└─ end");
 
             String emitted = sink.toString(StandardCharsets.UTF_8);
-            assertTrue(emitted.contains("⏵"), "应该出现折叠箭头: " + emitted);
+            assertTrue(emitted.contains("[+]"), "应该出现折叠标签: " + emitted);
             assertTrue(emitted.contains("code: java"), emitted);
             assertTrue(emitted.contains("2 行"), "应统计 body 行数: " + emitted);
             assertTrue(emitted.contains("ctrl+o"), emitted);
@@ -660,7 +660,7 @@ class InlineRendererTest {
             assertTrue(emitted.contains("echo hi"), "展开后应看到代码体: " + emitted);
             assertTrue(emitted.contains("┌─ code: bash"), emitted);
             assertTrue(emitted.contains("└─ end"), emitted);
-            assertTrue(emitted.contains("⏷"), "展开态应显示 collapse 提示: " + emitted);
+            assertTrue(emitted.contains("[-]"), "展开态应显示 collapse 提示: " + emitted);
         } finally {
             renderer.close();
         }
@@ -683,7 +683,7 @@ class InlineRendererTest {
             assertTrue(emitted.contains("普通段落 1"), emitted);
             assertTrue(emitted.contains("普通段落 2"), emitted);
             // 不应出现折叠箭头
-            assertFalse(emitted.contains("⏵"));
+            assertFalse(emitted.contains("[+] "));
         } finally {
             renderer.close();
         }

@@ -16,7 +16,7 @@ class ToolResultDiagnosticTest {
         assertTrue(missing.retryable());
 
         ToolResultDiagnostic denied = ToolResultDiagnostic.classify(
-                "🛡️ 策略拒绝: 路径超出项目根目录", false);
+                "[policy] 策略拒绝: 路径超出项目根目录", false);
         assertEquals(ToolResultDiagnostic.ErrorCode.POLICY_DENIED, denied.code());
         assertFalse(denied.retryable());
 

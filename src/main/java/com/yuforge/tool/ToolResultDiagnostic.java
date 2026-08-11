@@ -52,7 +52,7 @@ public record ToolResultDiagnostic(
         String text = result == null ? "" : result.trim();
         String lower = text.toLowerCase(Locale.ROOT);
 
-        if (startsWithAny(text, "🛡️ 策略拒绝:", "策略拒绝:")) {
+        if (startsWithAny(text, "[policy] 策略拒绝:", "策略拒绝:")) {
             return error(ErrorCode.POLICY_DENIED, false,
                     "不要原样重试；改用策略允许的路径、参数或操作，并在需要时向用户说明限制。");
         }

@@ -58,15 +58,15 @@ public class CodeIndex {
         Path root = Paths.get(projectPath).toAbsolutePath().normalize();
         if (!Files.exists(root)) {
             String message = "路径不存在: " + projectPath;
-            emit("❌ " + message);
+            emit("[error] " + message);
             return new IndexResult(0, 0, message);
         }
 
-        emit("🔍 开始索引: " + root);
+        emit("开始索引: " + root);
 
         List<Path> filesToIndex = new ArrayList<>();
         collectFiles(root, filesToIndex);
-        emit("📁 发现 " + filesToIndex.size() + " 个文件待索引");
+        emit("发现 " + filesToIndex.size() + " 个文件待索引");
 
         List<VectorStore.CodeChunkEntry> entries = new ArrayList<>();
         List<CodeRelation> allRelations = new ArrayList<>();
@@ -95,7 +95,7 @@ public class CodeIndex {
                     allRelations.addAll(analyzer.analyzeFile(file));
                 }
             } catch (Exception e) {
-                String message = "   ⚠️ 索引失败: " + file + " - " + e.getMessage();
+                String message = "   [warn] 索引失败: " + file + " - " + e.getMessage();
                 emit(message);
                 log.warn("code index failed for file {}", file, e);
             }
@@ -109,11 +109,11 @@ public class CodeIndex {
 
             VectorStore.IndexStats stats = store.getStats();
             String msg = String.format("索引完成：%d 个代码块，%d 条关系", stats.chunkCount(), stats.relationCount());
-            emit("✅ " + msg);
+            emit("[ok] " + msg);
             return new IndexResult(stats.chunkCount(), stats.relationCount(), msg);
         } catch (Exception e) {
             String error = "持久化失败: " + e.getMessage();
-            emit("❌ " + error);
+            emit("[error] " + error);
             log.warn("code index persistence failed for root {}", root, e);
             return new IndexResult(0, 0, error);
         }
@@ -168,7 +168,7 @@ public class CodeIndex {
             });
         } catch (IOException e) {
             String message = "遍历文件失败: " + e.getMessage();
-            emit("❌ " + message);
+            emit("[error] " + message);
             log.warn("code index file traversal failed for root {}", root, e);
         }
     }
