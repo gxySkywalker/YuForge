@@ -121,6 +121,7 @@ src/main/java/com/yuforge/
 - `/team` 默认输出采用角色状态摘要：`Planner planning/ready → Worker n/N → Reviewer n/N → Completed`。Planner 的探索旁白/计划 JSON、Worker 中间自然语言正文与 Reviewer 审查 JSON 只供 Orchestrator 内部消费，不得重复写入用户 transcript；工具卡片、失败原因和最终步骤结果保留。计划列表最多展示 8 项且单项有长度上限。Team 专属状态标签使用 ASCII/文字，避免 Windows 字体把 emoji 渲染为问号。
 - Phase 22 开始，`InlineRenderer` 可绑定当前 `LineReader`；当 `LineReader.isReading()` 为 true 时，`Renderer.stream()` 的完整行输出优先通过 `LineReader#printAbove` 显示在输入行上方，未绑定 / 非读取态 / 测试路径回退到原 `PrintStream`。
 - Markdown 表格渲染要按当前终端列宽分配列宽；长内容在单元格内部换行，不能依赖终端自动折行把整行表格打散。
+- Markdown 普通段落、标题、引用和列表也必须按当前终端列宽主动换行；列表续行使用悬挂缩进，代码块保持原文并交由折叠机制处理，避免 Windows Terminal resize 后重新切分历史行。
 - Markdown fenced code block 使用轻量词法高亮区分常见关键字、字符串、数字和注释；高亮只能添加 ANSI SGR 样式，必须保持原始代码字符完全不变，未知语言安全退化为原文。
 - ReAct 正常结束后不再把 `📊 Token: ...` 打进正文区；token/cost/elapsed 会保留在底部强状态行，phase 回到 `idle`。
 - 默认 CLI 启动路径应尽早建立 `Terminal -> LineReader -> Renderer`，启动 Banner、模型加载、MCP 启动、Skill summary、ReAct 提示和退出提示都应走 `Renderer.stream()`；除 fatal bootstrap / runtime API / legacy TUI 降级外，不要在交互主路径新增裸 `System.out.println`。

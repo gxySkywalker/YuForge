@@ -30,6 +30,7 @@
 - **长上下文与记忆**：工具结果归档恢复、结构化压缩、项目级 `YUFORGE.md`、长期记忆和 checkpoint 会话恢复。
 - **安全工具调用**：工作区信任、HITL、PathGuard、CommandGuard、审计日志与 Prompt Injection 防护。
 - **克制的长任务输出**：连续代码探索会合并为有界摘要，修改、验证和错误仍即时可见，最近详情可通过 `Ctrl+O` 展开。
+- **终端宽度感知**：长段落、标题、列表和表格由渲染器主动换行，缩放窗口时不依赖终端重新切割历史文本。
 - **MCP 与浏览器**：stdio / Streamable HTTP MCP、动态工具与 resources、Chrome DevTools MCP。
 - **稳定 CLI**：JLine 命令补全、可取消任务、折叠工具摘要和跨平台 `yuforge` 命令；提交后立即显示 Thinking，结束保留分段耗时，代码块轻量语法高亮，每轮以 `model · workspace` footer 收束。
 

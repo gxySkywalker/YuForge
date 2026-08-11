@@ -125,6 +125,54 @@ class TerminalMarkdownRendererTest {
         assertFalse(rendered.contains("| s    |"), rendered);
     }
 
+    @Test
+    void wrapsLongParagraphsAndUsesHangingIndentForLists() {
+        String markdown = """
+                这是一个很长的中文段落，用来确认终端渲染器会主动按照当前列宽换行，而不是依赖 Windows Terminal 自动重排已经写入滚屏的内容。
+                - 这是一个很长的列表项目，它换行之后应该保持悬挂缩进，让后续行和正文对齐而不是顶到项目符号下面。
+                12. This is a deliberately long ordered item that should wrap with a stable hanging indent.
+                """;
+
+        String rendered = TerminalMarkdownRenderer.render(markdown, 40);
+
+        for (String line : rendered.split("\\R")) {
+            assertTrue(displayWidth(stripAnsi(line)) <= 40, "line exceeds terminal width: " + line);
+        }
+        assertTrue(rendered.lines().anyMatch(line -> line.startsWith("  ") && line.contains("保持")), rendered);
+        assertTrue(rendered.lines().anyMatch(line -> line.startsWith("    ") && line.contains("stable")), rendered);
+    }
+
+    @Test
+    void wrapsLongHeadingAndKeyValueRowsWithinTerminalWidth() {
+        String markdown = """
+                ## 这是一个需要在窄终端中安全换行的超长章节标题而且不能依赖终端自动折行
+
+                | 名称 | 说明 |
+                | --- | --- |
+                | src/main/java/com/yuforge/very/long/path | 这是很长的说明文本，需要在记录布局中主动换行并保持稳定。 |
+                """;
+
+        String rendered = TerminalMarkdownRenderer.render(markdown, 40);
+
+        for (String line : rendered.split("\\R")) {
+            assertTrue(displayWidth(stripAnsi(line)) <= 40, "line exceeds terminal width: " + line);
+        }
+    }
+
+    private static int displayWidth(String value) {
+        int width = 0;
+        for (int offset = 0; offset < value.length();) {
+            int cp = value.codePointAt(offset);
+            Character.UnicodeScript script = Character.UnicodeScript.of(cp);
+            width += switch (script) {
+                case HAN, HIRAGANA, KATAKANA, HANGUL -> 2;
+                default -> 1;
+            };
+            offset += Character.charCount(cp);
+        }
+        return width;
+    }
+
     private static String stripAnsi(String value) {
         return value.replaceAll("\\u001B\\[[;\\d]*m", "");
     }

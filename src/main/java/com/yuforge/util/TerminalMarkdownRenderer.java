@@ -138,25 +138,26 @@ public final class TerminalMarkdownRenderer {
             if (indentLevel == 0 && lastBlockType != BlockType.NONE && lastBlockType != BlockType.ORDERED_LIST_ITEM) {
                 writeBlankLine();
             }
-            writeLine(indent(indentLevel) + orderedMatcher.group(2) + ". " + sanitizeInline(orderedMatcher.group(3).trim()),
-                    BlockType.ORDERED_LIST_ITEM);
+            String prefix = indent(indentLevel) + orderedMatcher.group(2) + ". ";
+            writeWrappedLine(prefix, sanitizeInline(orderedMatcher.group(3).trim()), BlockType.ORDERED_LIST_ITEM);
             return;
         }
 
         var unorderedMatcher = UNORDERED_LIST.matcher(line);
         if (unorderedMatcher.matches()) {
             int indentLevel = indentLevel(unorderedMatcher.group(1));
-            writeLine(indent(indentLevel) + "- " + sanitizeInline(unorderedMatcher.group(2).trim()),
-                    BlockType.UNORDERED_LIST_ITEM);
+            String prefix = indent(indentLevel) + "- ";
+            writeWrappedLine(prefix, sanitizeInline(unorderedMatcher.group(2).trim()), BlockType.UNORDERED_LIST_ITEM);
             return;
         }
 
         if (trimmed.startsWith(">")) {
-            writeLine(AnsiStyle.quotePrefix("│") + " " + sanitizeInline(trimmed.substring(1).trim()), BlockType.QUOTE);
+            writeWrappedLine(AnsiStyle.quotePrefix("│") + " ",
+                    sanitizeInline(trimmed.substring(1).trim()), BlockType.QUOTE);
             return;
         }
 
-        writeLine(sanitizeInline(line), BlockType.PARAGRAPH);
+        writeWrappedLine("", sanitizeInline(line), BlockType.PARAGRAPH);
     }
 
     private void toggleCodeBlock(String language) {
@@ -176,9 +177,13 @@ public final class TerminalMarkdownRenderer {
 
     private void renderHeading(int level, String content) {
         ensureBlockSpacing();
-        writeLine(AnsiStyle.heading(content), BlockType.HEADING);
+        List<String> wrapped = wrapCell(content, Math.max(12, terminalColumns()));
+        for (String part : wrapped) {
+            writeLine(AnsiStyle.heading(part), BlockType.HEADING);
+        }
         char underline = level == 1 ? '=' : '-';
-        writeLine(AnsiStyle.muted(String.valueOf(underline).repeat(Math.max(content.length(), 4))), BlockType.HEADING);
+        int underlineWidth = wrapped.stream().mapToInt(this::displayWidth).max().orElse(4);
+        writeLine(AnsiStyle.muted(String.valueOf(underline).repeat(Math.max(underlineWidth, 4))), BlockType.HEADING);
         writeBlankLine();
     }
 
@@ -305,6 +310,17 @@ public final class TerminalMarkdownRenderer {
         }
     }
 
+    private void writeWrappedLine(String prefix, String value, BlockType type) {
+        String safePrefix = prefix == null ? "" : prefix;
+        int prefixWidth = displayWidth(AnsiStyle.strip(safePrefix));
+        int contentWidth = Math.max(12, terminalColumns() - prefixWidth);
+        List<String> parts = wrapCell(value, contentWidth);
+        String continuation = " ".repeat(Math.max(0, prefixWidth));
+        for (int i = 0; i < parts.size(); i++) {
+            writeLine((i == 0 ? safePrefix : continuation) + parts.get(i), type);
+        }
+    }
+
     private boolean shouldRenderAsKeyValue(List<List<String>> rows) {
         int maxWidth = 0;
         int totalWidth = 0;
@@ -330,9 +346,9 @@ public final class TerminalMarkdownRenderer {
             List<String> row = rows.get(i);
             String left = row.size() > 0 ? sanitizeInline(row.get(0)) : "";
             String right = row.size() > 1 ? sanitizeInline(row.get(1)) : "";
-            writeLine(AnsiStyle.emphasis("- " + left), BlockType.TABLE);
+            writeWrappedRecordLine("- ", left, Math.max(12, terminalColumns() - 2), BlockType.TABLE);
             if (!right.isBlank()) {
-                writeLine("  " + right, BlockType.TABLE);
+                writeWrappedRecordLine("  ", right, Math.max(12, terminalColumns() - 2), BlockType.TABLE);
             }
             if (i < rows.size() - 1) {
                 writeBlankLine();
@@ -512,6 +528,7 @@ public final class TerminalMarkdownRenderer {
 
         StringBuilder line = new StringBuilder();
         int lineWidth = 0;
+        int lastBreakIndex = -1;
         for (int offset = 0; offset < text.length();) {
             int cp = text.codePointAt(offset);
             int cpWidth = codePointWidth(cp);
@@ -520,14 +537,24 @@ public final class TerminalMarkdownRenderer {
                 if (lineWidth > 0 && lineWidth < targetWidth) {
                     line.append(' ');
                     lineWidth++;
+                    lastBreakIndex = line.length() - 1;
                 }
                 offset += charCount;
                 continue;
             }
             if (lineWidth > 0 && lineWidth + cpWidth > targetWidth) {
-                lines.add(line.toString().stripTrailing());
-                line.setLength(0);
-                lineWidth = 0;
+                if (lastBreakIndex >= 0) {
+                    lines.add(line.substring(0, lastBreakIndex).stripTrailing());
+                    String remainder = line.substring(lastBreakIndex + 1).stripLeading();
+                    line.setLength(0);
+                    line.append(remainder);
+                    lineWidth = displayWidth(remainder);
+                    lastBreakIndex = line.lastIndexOf(" ");
+                } else {
+                    lines.add(line.toString().stripTrailing());
+                    line.setLength(0);
+                    lineWidth = 0;
+                }
             }
             line.appendCodePoint(cp);
             lineWidth += cpWidth;
