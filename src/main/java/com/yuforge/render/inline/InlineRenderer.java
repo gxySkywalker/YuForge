@@ -46,6 +46,8 @@ public final class InlineRenderer implements Renderer {
     private volatile boolean closed;
     private volatile boolean simpleThinkingVisible;
     private volatile long simpleThinkingStartedNanos;
+    private long turnThinkingElapsedMillis;
+    private int turnThinkingCycles;
     private volatile StatusInfo latestStatus;
     private volatile boolean turnHadActivity;
 
@@ -90,6 +92,8 @@ public final class InlineRenderer implements Renderer {
             codeLanguage = "";
             codeHeaderLine = null;
         }
+        turnThinkingElapsedMillis = 0L;
+        turnThinkingCycles = 0;
         blockRegistry.clear();
     }
 
@@ -106,6 +110,7 @@ public final class InlineRenderer implements Renderer {
 
     @Override
     public void beforeInput() {
+        emitTurnThinkingSummary();
         if (statusBar != null) {
             statusBar.prepareInputLine();
             statusBar.flushNow();
@@ -208,8 +213,19 @@ public final class InlineRenderer implements Renderer {
             simpleThinkingVisible = false;
             long elapsedMillis = Math.max(0L,
                     TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - simpleThinkingStartedNanos));
-            stream.println(AnsiStyle.subtle("  Thought for " + formatElapsed(elapsedMillis)));
+            turnThinkingElapsedMillis += elapsedMillis;
+            turnThinkingCycles++;
         }
+    }
+
+    private void emitTurnThinkingSummary() {
+        if (turnThinkingCycles <= 0) {
+            return;
+        }
+        long elapsedMillis = turnThinkingElapsedMillis;
+        turnThinkingElapsedMillis = 0L;
+        turnThinkingCycles = 0;
+        emit(AnsiStyle.subtle("  Thought for " + formatElapsed(elapsedMillis)) + "\n");
     }
 
     @Override

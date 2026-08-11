@@ -112,6 +112,7 @@ src/main/java/com/yuforge/
 - 普通任务和斜杠命令提交后，JLine 保留本轮原始输入到 scrollback，输入提示为 `>`；默认 inline 不得再用相对光标清除并深色回显该行，否则 resize/CJK 自动换行后可能擦错历史。普通任务随后再展开 MCP resource / 本地 `@path` 并进入 Agent。`/clear` 清空 conversationHistory、shortTermMemory、待注入 Skill buffer 和会话 TODO，并重建不含上一轮检索记忆的 system prompt；长期记忆保留。`/compact` 会手动压缩当前 ReAct conversationHistory，不等待上下文阈值触发，保留最近 1 个 user 轮次和 tool_call/tool_result 边界。
 - 复杂任务可由 Agent 用 `rewrite_todo_list` / `update_todo_status` 维护会话内 TODO；它是外部工作记忆，进入后续 user turn，并在底部 dock phase 中显示摘要。TODO 不落盘、不写入长期记忆，也不替代 Plan DAG 或后台 `/task`。
 - 普通任务提交后，inline renderer 必须立即显示独占的单行 `Thinking... (Esc cancel, Xs)`，覆盖 pre-turn Side-Git 快照、上下文准备和 ReAct LLM 调用，避免大仓库快照期间出现无反馈等待；默认不把 provider 原始 `reasoning_content` 落入 transcript。模型历史与日志仍按协议保留。仅本地排障可通过 `-Dyuforge.render.show_reasoning=true` 或 `YUFORGE_RENDER_SHOW_REASONING=true` 显式回显；Plan task / SubAgent 同样遵守此开关。活动区只能用回车清理自己当前所在的单行，不能使用 `moveUp`、独立 JLine `Display.update()` 或 `CLEAR_TO_EOS` 覆盖 transcript。
+- 同一用户 turn 内的多次 LLM thinking 循环只在当前活动行动态显示秒表；每次工具往返结束不得追加一条独立 `Thought for`。回到输入框前只追加一次本轮累计思考耗时，避免长任务被十几条计时记录淹没。
 - inline 工具卡片保持折叠、单行可扫读：按工具语义展示“探索 / 修改 / 验证 / 运行”阶段、关键对象和耗时；失败只显示错误码与脱敏的短恢复建议，禁止把原始工具输出、命令错误正文或敏感内容刷进 transcript。默认普通滚屏按 append-only 原则工作：Ctrl+O 只将最近块的详情追加到末尾，不可回退光标重绘历史；thinking 同样是稳定事件行，不维护会随 resize 覆盖错位的 live area。
 - inline 工具批次的成功结果默认收进折叠边界，不得在卡片下逐条重复打印 `[ok]`；错误、超时、策略拒绝与用户拒绝仍需立即进入 transcript。多列 Markdown 表格在有效列宽不足时自动降级为“记录 + 字段”布局，禁止把路径或类名压成逐字符竖排。
 - inline 流式代码块先显示稳定的 `generating code` 行，结束时追加可折叠代码块；不得依赖 ANSI `moveUp` / `CLEAR_TO_EOS` 回退覆盖已写出的 transcript，避免宽字符换行或异步输出导致 scrollback 错位。

@@ -320,11 +320,41 @@ class InlineRendererTest {
             sink.reset();
             renderer.endThinking();
             String completed = sink.toString(StandardCharsets.UTF_8);
-            assertTrue(completed.contains("Thought for"), completed);
+            assertFalse(completed.contains("Thought for"), completed);
             assertFalse(completed.contains(AnsiSeq.moveUp(1)), completed);
+
+            renderer.beforeInput();
+            String turnCompleted = sink.toString(StandardCharsets.UTF_8);
+            assertTrue(turnCompleted.contains("Thought for"), turnCompleted);
+            assertFalse(turnCompleted.contains(AnsiSeq.moveUp(1)), turnCompleted);
         } finally {
             renderer.close();
             restoreBottomDockProperty(previous);
+        }
+    }
+
+    @Test
+    void multipleThinkingCyclesProduceOneTurnSummary() {
+        Terminal terminal = Mockito.mock(Terminal.class);
+        Mockito.when(terminal.getType()).thenReturn("dumb");
+        Mockito.when(terminal.getSize()).thenReturn(new Size(100, 30));
+        ByteArrayOutputStream sink = new ByteArrayOutputStream();
+        InlineRenderer renderer = new InlineRenderer(terminal,
+                new PrintStream(sink, true, StandardCharsets.UTF_8));
+        try {
+            renderer.beginTurn();
+            renderer.beginThinking("Thinking");
+            renderer.endThinking();
+            renderer.beginThinking("Thinking");
+            renderer.endThinking();
+
+            assertEquals(0, occurrences(sink.toString(StandardCharsets.UTF_8), "Thought for"));
+            renderer.beforeInput();
+            assertEquals(1, occurrences(sink.toString(StandardCharsets.UTF_8), "Thought for"));
+            renderer.beforeInput();
+            assertEquals(1, occurrences(sink.toString(StandardCharsets.UTF_8), "Thought for"));
+        } finally {
+            renderer.close();
         }
     }
 
@@ -564,5 +594,15 @@ class InlineRendererTest {
         } finally {
             renderer.close();
         }
+    }
+
+    private static int occurrences(String text, String needle) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = text.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
     }
 }
