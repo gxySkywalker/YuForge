@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -410,6 +411,34 @@ class ToolRegistryTest {
         assertEquals("result-first", results.get(0).result());
         assertEquals("call_2", results.get(1).id());
         assertEquals("result-second", results.get(1).result());
+    }
+
+    @Test
+    void shouldReportParallelToolCompletionWithoutChangingResultOrder() {
+        ToolRegistry registry = new ToolRegistry() {
+            @Override
+            public String executeTool(String name, String argumentsJson) {
+                if ("first".equals(name)) {
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return "result-" + name;
+            }
+        };
+        List<String> completed = new CopyOnWriteArrayList<>();
+
+        List<ToolRegistry.ToolExecutionResult> results = registry.executeTools(List.of(
+                new ToolRegistry.ToolInvocation("call_1", "first", "{}"),
+                new ToolRegistry.ToolInvocation("call_2", "second", "{}")
+        ), result -> completed.add(result.id()));
+
+        assertEquals(List.of("call_2", "call_1"), completed,
+                "完成回调应反映真实完成顺序");
+        assertEquals(List.of("call_1", "call_2"), results.stream().map(ToolRegistry.ToolExecutionResult::id).toList(),
+                "返回结果仍应保持模型发起顺序");
     }
 
     private static McpToolDescriptor stepSearchDescriptor(String name, String schema) throws Exception {

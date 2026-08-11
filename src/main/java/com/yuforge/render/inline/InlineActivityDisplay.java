@@ -93,6 +93,14 @@ final class InlineActivityDisplay implements AutoCloseable {
         restartTickLocked();
     }
 
+    synchronized void updateActivity(String label, String detail) {
+        if (!active || closed) {
+            return;
+        }
+        this.label = (label == null || label.isBlank()) ? this.label : label.trim();
+        renderLocked();
+    }
+
     synchronized void appendThinking(String delta) {
         // 默认不在瞬态区域展示原始 reasoning。保持固定单行是 resize 安全边界；
         // reasoning 仍按 provider 协议保留在历史/日志中。

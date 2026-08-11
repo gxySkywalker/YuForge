@@ -75,8 +75,8 @@ class ToolCallRendererTest {
                 tc("read_file", "{}"),
                 tc("write_file", "{}")));
         String header = ToolCallRenderer.collapsedHeader(grouped);
-        assertTrue(header.contains("2 组工具调用"), header);
-        assertTrue(header.contains("2 次"), header);
+        assertTrue(header.contains("已调度 2 个工具"), header);
+        assertTrue(header.contains("2 组"), header);
     }
 
     @Test

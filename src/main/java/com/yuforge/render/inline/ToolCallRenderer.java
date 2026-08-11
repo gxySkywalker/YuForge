@@ -60,8 +60,8 @@ public final class ToolCallRenderer {
                     + stripPrefixIcon(label) + " (ctrl+o to expand)");
         }
         int totalCalls = grouped.values().stream().mapToInt(List::size).sum();
-        return AnsiStyle.subtle("> " + grouped.size() + " 组工具调用 / "
-                + totalCalls + " 次 (ctrl+o to expand)");
+        return AnsiStyle.subtle("> 已调度 " + totalCalls + " 个工具 · "
+                + grouped.size() + " 组 (ctrl+o to expand)");
     }
 
     static String withHeaderPrefix(String styledHeader, String prefix) {

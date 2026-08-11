@@ -36,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 /**
@@ -409,8 +410,13 @@ public class SubAgent {
             renderer.beginToolExecution(toolCalls);
         }
         List<ToolExecutionResult> results = List.of();
+        AtomicInteger completed = new AtomicInteger();
         try {
-            results = toolRegistry.executeTools(invocations);
+            results = toolRegistry.executeTools(invocations, ignored -> {
+                if (renderProgress) {
+                    renderer.updateToolExecution(completed.incrementAndGet(), invocations.size());
+                }
+            });
         } finally {
             if (renderProgress) {
                 renderer.endToolExecution(results.size(), invocations.size());

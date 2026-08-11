@@ -42,6 +42,7 @@ import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Agent 核心类 - 实现 ReAct 循环
@@ -758,8 +759,10 @@ public class Agent {
         }
         renderer().beginToolExecution(toolCalls);
         List<ToolExecutionResult> results = List.of();
+        AtomicInteger completed = new AtomicInteger();
         try {
-            results = toolRegistry.executeTools(invocations);
+            results = toolRegistry.executeTools(invocations, ignored ->
+                    renderer().updateToolExecution(completed.incrementAndGet(), invocations.size()));
         } finally {
             renderer().endToolExecution(results.size(), invocations.size());
         }

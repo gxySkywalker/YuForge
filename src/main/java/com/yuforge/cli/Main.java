@@ -1235,7 +1235,6 @@ public class Main {
     }
 
     private static AgentOrchestrator createTeamAgent(LlmClient llmClient, Agent reactAgent, Renderer renderer, PrintStream out) {
-        out.println("👥 使用 Multi-Agent 协作模式\n");
         return new AgentOrchestrator(llmClient, reactAgent.getToolRegistry(), reactAgent.getMemoryManager(), renderer);
     }
 

@@ -7,7 +7,9 @@ import com.yuforge.llm.GLMClient;
 import com.yuforge.llm.LlmClient;
 import com.yuforge.memory.LongTermMemory;
 import com.yuforge.memory.MemoryManager;
+import com.yuforge.render.Renderer;
 import com.yuforge.tool.ToolRegistry;
+import org.mockito.Mockito;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -309,7 +311,8 @@ class AgentOrchestratorTest {
         AgentOrchestrator orchestrator = new AgentOrchestrator(
                 llmClient,
                 new ToolRegistry(),
-                new NoOpMemoryManager(tempDir.toFile())
+                new NoOpMemoryManager(tempDir.toFile()),
+                System.out
         );
 
         String finalResult = orchestrator.run("测试重试逻辑");
@@ -383,10 +386,15 @@ class AgentOrchestratorTest {
         };
 
         DispatchingStubGLMClient llmClient = new DispatchingStubGLMClient(dispatcher);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        PrintStream out = new PrintStream(output, true, StandardCharsets.UTF_8);
+        Renderer renderer = Mockito.mock(Renderer.class);
+        Mockito.when(renderer.stream()).thenReturn(out);
         AgentOrchestrator orchestrator = new AgentOrchestrator(
                 llmClient,
                 new ToolRegistry(),
-                new NoOpMemoryManager(tempDir.toFile())
+                new NoOpMemoryManager(tempDir.toFile()),
+                renderer
         );
 
         String finalResult = orchestrator.run("测试并行执行");
@@ -395,6 +403,11 @@ class AgentOrchestratorTest {
         assertTrue(finalResult.contains("任务B"), "finalResult should mention task B");
         // 两个 Worker 同时持有 chat() 调用 → 并发峰值至少为 2
         assertEquals(2, peakConcurrency.get(), "Expected two workers to run concurrently");
+        Mockito.verify(renderer).beginActivity("执行中 · 0/2", null);
+        Mockito.verify(renderer).updateActivity("执行中 · 1/2", null);
+        Mockito.verify(renderer).updateActivity("执行中 · 2/2", null);
+        Mockito.verify(renderer).endActivity();
+        assertTrue(output.toString(StandardCharsets.UTF_8).contains("执行批次完成 · 2/2"));
     }
 
     private static LlmClient.ChatResponse awaitBarrierThenReturn(CountDownLatch latch,

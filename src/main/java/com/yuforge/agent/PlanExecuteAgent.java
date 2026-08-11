@@ -38,6 +38,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -688,8 +689,13 @@ public class PlanExecuteAgent {
             renderer.beginToolExecution(toolCalls);
         }
         List<ToolExecutionResult> results = List.of();
+        AtomicInteger completed = new AtomicInteger();
         try {
-            results = toolRegistry.executeTools(invocations);
+            results = toolRegistry.executeTools(invocations, ignored -> {
+                if (renderProgress) {
+                    renderer.updateToolExecution(completed.incrementAndGet(), invocations.size());
+                }
+            });
         } finally {
             if (renderProgress) {
                 renderer.endToolExecution(results.size(), invocations.size());

@@ -114,12 +114,12 @@ src/main/java/com/yuforge/
 - 普通任务提交后，inline renderer 必须立即显示独占的单行 `Thinking... (Esc cancel, Xs)`，覆盖 pre-turn Side-Git 快照、上下文准备和 ReAct LLM 调用，避免大仓库快照期间出现无反馈等待；默认不把 provider 原始 `reasoning_content` 落入 transcript。模型历史与日志仍按协议保留。仅本地排障可通过 `-Dyuforge.render.show_reasoning=true` 或 `YUFORGE_RENDER_SHOW_REASONING=true` 显式回显；Plan task / SubAgent 同样遵守此开关。活动区只能用回车清理自己当前所在的单行，不能使用 `moveUp`、独立 JLine `Display.update()` 或 `CLEAR_TO_EOS` 覆盖 transcript。
 - 同一用户 turn 内的多次 LLM thinking 循环只在当前活动行动态显示秒表；每次工具往返结束不得追加一条独立 `Thought for`。回到输入框前只追加一次本轮累计思考耗时，避免长任务被十几条计时记录淹没。
 - inline 工具卡片保持折叠、单行可扫读：按工具语义展示“探索 / 修改 / 验证 / 运行”阶段、关键对象和耗时；失败只显示错误码与脱敏的短恢复建议，禁止把原始工具输出、命令错误正文或敏感内容刷进 transcript。默认普通滚屏按 append-only 原则工作：Ctrl+O 只将最近块的详情追加到末尾，不可回退光标重绘历史；thinking 同样是稳定事件行，不维护会随 resize 覆盖错位的 live area。
-- Renderer 的工具批次必须有 begin/end 生命周期：执行期间用单行活动态显示“阶段中 · 0/N · elapsed”，结束后对修改/验证/运行留下“阶段完成 · N/N · elapsed”终态；任务运行期的键盘监听必须把 `Ctrl+O` 路由到最近折叠块，不能当作无关输入 drain。
+- Renderer 的工具批次必须有 begin/update/end 生命周期：执行期间用单行活动态显示“阶段中 · 0/N → 1/N → N/N · elapsed”，结束后对修改/验证/运行留下“阶段完成 · N/N · elapsed”终态；`ToolRegistry.executeTools` 的完成回调可从并行线程触发，只用于进度通知且不能改变最终结果顺序；任务运行期的键盘监听必须把 `Ctrl+O` 路由到最近折叠块，不能当作无关输入 drain。
 - 长任务中的连续只读探索工具批次采用有界节流：前两批即时展示，后续最多四批合并成一个可展开摘要；文件修改、命令执行、验证及失败信息始终即时展示。节流只能减少 transcript 噪音，不能丢失可展开的工具调用参数。
 - inline 工具批次的成功结果默认收进折叠边界，不得在卡片下逐条重复打印 `[ok]`；错误、超时、策略拒绝与用户拒绝仍需立即进入 transcript。多列 Markdown 表格在有效列宽不足时自动降级为“记录 + 字段”布局，禁止把路径或类名压成逐字符竖排。
 - inline 流式代码块先显示稳定的 `generating code` 行，结束时追加可折叠代码块；不得依赖 ANSI `moveUp` / `CLEAR_TO_EOS` 回退覆盖已写出的 transcript，避免宽字符换行或异步输出导致 scrollback 错位。
 - inline diff 的颜色必须通过统一 `AnsiStyle` 生成，禁止把缺少 ESC 的 `[32m` / `[0m` 等伪控制码写入正文；小 diff 直接显示，超过 28 行时折叠为 `Update(path) · +N -N` 摘要，并允许 `Ctrl+O` 追加展开完整 diff。
-- 交互期输出应优先走 `Renderer.stream()`；`Main`、`PlanExecuteAgent`、`Planner`、`AgentOrchestrator` 都支持把输出流接到 inline renderer，避免直接争抢 stdout。`/plan` 与 `/team` 的单步直连工具调用还应传入 `Renderer` 本体，复用可折叠工具块；Team 并行批次必须继续写独立缓冲流、按 step_id 顺序 flush，不能从多个 Worker 线程直接调用 renderer。`CodeIndex` 的索引进度通过 `ProgressListener` 注入，`/index` 应绑定到当前 renderer 输出流。
+- 交互期输出应优先走 `Renderer.stream()`；`Main`、`PlanExecuteAgent`、`Planner`、`AgentOrchestrator` 都支持把输出流接到 inline renderer，避免直接争抢 stdout。`/plan` 与 `/team` 的单步直连工具调用还应传入 `Renderer` 本体，复用可折叠工具块；Team 并行批次必须继续写独立缓冲流、按 step_id 顺序 flush，不能从多个 Worker 线程直接调用 renderer，但编排器必须用 `CompletionService` 在公共活动行展示真实的 `completed/total`，避免缓冲期间看似卡死。`CodeIndex` 的索引进度通过 `ProgressListener` 注入，`/index` 应绑定到当前 renderer 输出流。
 - `/team` 默认输出采用角色状态摘要：`Planner planning/ready → Worker n/N → Reviewer n/N → Completed`。Planner 的探索旁白/计划 JSON、Worker 中间自然语言正文与 Reviewer 审查 JSON 只供 Orchestrator 内部消费，不得重复写入用户 transcript；工具卡片、失败原因和最终步骤结果保留。计划列表最多展示 8 项且单项有长度上限。Team 专属状态标签使用 ASCII/文字，避免 Windows 字体把 emoji 渲染为问号。
 - Phase 22 开始，`InlineRenderer` 可绑定当前 `LineReader`；当 `LineReader.isReading()` 为 true 时，`Renderer.stream()` 的完整行输出优先通过 `LineReader#printAbove` 显示在输入行上方，未绑定 / 非读取态 / 测试路径回退到原 `PrintStream`。
 - Markdown 表格渲染要按当前终端列宽分配列宽；长内容在单元格内部换行，不能依赖终端自动折行把整行表格打散。

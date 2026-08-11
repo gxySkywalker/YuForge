@@ -189,12 +189,16 @@ class PlanExecuteAgentTest {
         ));
         ToolRegistry rejectingRegistry = new ToolRegistry() {
             @Override
-            public List<ToolExecutionResult> executeTools(List<ToolInvocation> invocations) {
+            public List<ToolExecutionResult> executeTools(
+                    List<ToolInvocation> invocations,
+                    java.util.function.Consumer<ToolExecutionResult> completionListener) {
                 ToolInvocation invocation = invocations.get(0);
                 String result = "[HITL] 操作已被拒绝：不要修改这个文件";
-                return List.of(new ToolExecutionResult(
+                ToolExecutionResult executionResult = new ToolExecutionResult(
                         invocation.id(), invocation.name(), invocation.argumentsJson(), result,
-                        1, false, List.of(), ToolResultDiagnostic.classify(result, false)));
+                        1, false, List.of(), ToolResultDiagnostic.classify(result, false));
+                completionListener.accept(executionResult);
+                return List.of(executionResult);
             }
         };
         PlanExecuteAgent agent = new PlanExecuteAgent(

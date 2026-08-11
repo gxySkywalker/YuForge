@@ -261,6 +261,13 @@ public final class InlineRenderer implements Renderer {
         }
     }
 
+    @Override
+    public void updateActivity(String label, String detail) {
+        if (activityDisplay != null && !closed) {
+            activityDisplay.updateActivity(label, detail);
+        }
+    }
+
     /**
      * 绑定当前交互循环使用的 JLine LineReader。
      *
@@ -356,6 +363,9 @@ public final class InlineRenderer implements Renderer {
         if (toolCalls == null || toolCalls.isEmpty()) {
             return;
         }
+        if (activityDisplay != null && activityDisplay.isActive()) {
+            activityDisplay.end();
+        }
         if (isExplorationOnly(toolCalls)) {
             if (visibleExplorationBatches < IMMEDIATE_EXPLORATION_BATCHES) {
                 visibleExplorationBatches++;
@@ -439,6 +449,12 @@ public final class InlineRenderer implements Renderer {
             emit(AnsiStyle.subtle("  " + phase + "完成 · " + completed + "/" + total
                     + " · " + formatElapsed(elapsedMillis)) + "\n");
         }
+    }
+
+    @Override
+    public void updateToolExecution(int completed, int total) {
+        String phase = toolExecutionPhase == null ? "工具" : toolExecutionPhase;
+        updateActivity(phase + "中 · " + completed + "/" + total, null);
     }
 
     private static String toolBatchPhase(List<LlmClient.ToolCall> calls) {

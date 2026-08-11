@@ -157,6 +157,10 @@ public class AgentOrchestrator {
      */
     public String run(String userInput) {
         log.info("Multi-Agent run started: inputLength={}", userInput == null ? 0 : userInput.length());
+        if (renderer != null) {
+            // Main 为首个模型请求建立的 Thinking 活动态到此结束；Team 后续由编排器拥有活动行。
+            renderer.endThinking();
+        }
         toolRegistry.setMemoryWriteAuthorization(userInput);
         memoryManager.addUserMessage(userInput);
         if (CancellationContext.isCancelled()) {
@@ -492,7 +496,11 @@ public class AgentOrchestrator {
         });
         BlockingQueue<SubAgent> workerPool = new LinkedBlockingQueue<>(workers);
         Map<String, ByteArrayOutputStream> buffers = new ConcurrentHashMap<>();
-        List<Future<?>> futures = new ArrayList<>();
+        CompletionService<Void> completions = new ExecutorCompletionService<>(executor);
+        long batchStartedNanos = System.nanoTime();
+        if (renderer != null) {
+            renderer.beginActivity("执行中 · 0/" + batch.size(), null);
+        }
 
         for (ExecutionStep step : batch) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -500,7 +508,7 @@ public class AgentOrchestrator {
             PrintStream stepOut = new PrintStream(baos, true, StandardCharsets.UTF_8);
             String context = buildStepContext(steps, step);
 
-            futures.add(executor.submit(() -> {
+            completions.submit(() -> {
                 SubAgent worker = null;
                 SubAgent localReviewer = new SubAgent(
                         "reviewer-" + step.id(), AgentRole.REVIEWER, llmClient, toolRegistry);
@@ -524,20 +532,36 @@ public class AgentOrchestrator {
                     stepOut.flush();
                 }
                 return null;
-            }));
+            });
         }
 
-        for (Future<?> f : futures) {
+        int completed = 0;
+        for (int i = 0; i < batch.size(); i++) {
             try {
-                f.get();
+                completions.take().get();
+                completed++;
+                if (renderer != null) {
+                    renderer.updateActivity("执行中 · " + completed + "/" + batch.size(), null);
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.warn("Batch wait interrupted");
+                break;
             } catch (ExecutionException e) {
+                completed++;
                 log.error("Parallel step task failed", e.getCause());
+                if (renderer != null) {
+                    renderer.updateActivity("执行中 · " + completed + "/" + batch.size(), null);
+                }
             }
         }
         executor.shutdownNow();
+        if (renderer != null) {
+            renderer.endActivity();
+        }
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStartedNanos);
+        out.println(AnsiStyle.status("  执行批次完成 · " + completed + "/" + batch.size()
+                + " · " + formatElapsed(elapsedMillis)));
 
         // 按 step_id 顺序 flush 各步骤的缓冲输出，保证用户看到的执行过程有稳定顺序
         for (ExecutionStep step : batch) {
@@ -547,6 +571,13 @@ public class AgentOrchestrator {
                 out.flush();
             }
         }
+    }
+
+    private static String formatElapsed(long elapsedMillis) {
+        if (elapsedMillis < 10_000L) {
+            return String.format(Locale.ROOT, "%.1fs", elapsedMillis / 1000.0);
+        }
+        return (elapsedMillis / 1000L) + "s";
     }
 
     /**

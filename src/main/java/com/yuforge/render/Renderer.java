@@ -80,6 +80,11 @@ public interface Renderer extends AutoCloseable {
         }
     }
 
+    /** 更新既有活动行，不应重置累计耗时。 */
+    default void updateActivity(String label, String detail) {
+        beginActivity(label, detail);
+    }
+
     /** 结束并清理通用临时活动面板。 */
     default void endActivity() {
         endThinking();
@@ -125,6 +130,10 @@ public interface Renderer extends AutoCloseable {
 
     /** 工具批次开始执行；inline renderer 用于展示阶段、批次规模和动态耗时。 */
     default void beginToolExecution(List<LlmClient.ToolCall> toolCalls) {
+    }
+
+    /** 单个工具获得终态时更新批次进度，可由并行执行线程调用。 */
+    default void updateToolExecution(int completed, int total) {
     }
 
     /** 工具批次结束；completed 是已返回终态结果的数量。 */

@@ -1503,19 +1503,29 @@ public class ToolRegistry {
      * 如果某个工具超过批次超时仍未返回，会取消任务并返回超时结果；已完成工具不受影响。
      */
     public List<ToolExecutionResult> executeTools(List<ToolInvocation> invocations) {
+        return executeTools(invocations, ignored -> { });
+    }
+
+    public List<ToolExecutionResult> executeTools(List<ToolInvocation> invocations,
+                                                  Consumer<ToolExecutionResult> completionListener) {
+        Consumer<ToolExecutionResult> listener = completionListener == null ? ignored -> { } : completionListener;
         if (invocations == null || invocations.isEmpty()) {
             return List.of();
         }
         if (CancellationContext.isCancelled()) {
-            return invocations.stream()
+            List<ToolExecutionResult> cancelled = invocations.stream()
                     .map(invocation -> ToolExecutionResult.failed(invocation, "用户取消了此次工具调用"))
                     .toList();
+            cancelled.forEach(result -> notifyCompletion(listener, result));
+            return cancelled;
         }
         if (invocations.size() == 1) {
             ToolInvocation invocation = invocations.get(0);
             long startedAt = System.nanoTime();
             ToolOutput output = executeToolOutput(invocation.name(), invocation.argumentsJson());
-            return List.of(ToolExecutionResult.completed(invocation, output, elapsedMillis(startedAt)));
+            ToolExecutionResult result = ToolExecutionResult.completed(invocation, output, elapsedMillis(startedAt));
+            notifyCompletion(listener, result);
+            return List.of(result);
         }
 
         int parallelism = Math.min(invocations.size(), MAX_PARALLEL_TOOLS);
@@ -1533,7 +1543,9 @@ public class ToolRegistry {
                         }
                         long startedAt = System.nanoTime();
                         ToolOutput output = executeToolOutput(invocation.name(), invocation.argumentsJson());
-                        return ToolExecutionResult.completed(invocation, output, elapsedMillis(startedAt));
+                        ToolExecutionResult result = ToolExecutionResult.completed(invocation, output, elapsedMillis(startedAt));
+                        notifyCompletion(listener, result);
+                        return result;
                     })
                     .toList();
 
@@ -1545,7 +1557,9 @@ public class ToolRegistry {
                 ToolInvocation invocation = invocations.get(i);
                 Future<ToolExecutionResult> future = futures.get(i);
                 if (future.isCancelled()) {
-                    results.add(ToolExecutionResult.timedOut(invocation, toolBatchTimeoutSeconds));
+                    ToolExecutionResult timedOut = ToolExecutionResult.timedOut(invocation, toolBatchTimeoutSeconds);
+                    results.add(timedOut);
+                    notifyCompletion(listener, timedOut);
                     continue;
                 }
 
@@ -1553,23 +1567,37 @@ public class ToolRegistry {
                     results.add(future.get());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    results.add(ToolExecutionResult.failed(invocation, "工具执行被中断"));
+                    ToolExecutionResult failed = ToolExecutionResult.failed(invocation, "工具执行被中断");
+                    results.add(failed);
+                    notifyCompletion(listener, failed);
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause();
                     String message = cause == null || cause.getMessage() == null
                             ? "未知错误"
                             : cause.getMessage();
-                    results.add(ToolExecutionResult.failed(invocation, message));
+                    ToolExecutionResult failed = ToolExecutionResult.failed(invocation, message);
+                    results.add(failed);
+                    notifyCompletion(listener, failed);
                 }
             }
             return results;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return invocations.stream()
+            List<ToolExecutionResult> interrupted = invocations.stream()
                     .map(invocation -> ToolExecutionResult.failed(invocation, "工具批次执行被中断"))
                     .toList();
+            interrupted.forEach(result -> notifyCompletion(listener, result));
+            return interrupted;
         } finally {
             executor.shutdownNow();
+        }
+    }
+
+    private void notifyCompletion(Consumer<ToolExecutionResult> listener, ToolExecutionResult result) {
+        try {
+            listener.accept(result);
+        } catch (RuntimeException e) {
+            // 进度展示是旁路能力，渲染失败不能改变工具执行结果或中断 Agent。
         }
     }
 
