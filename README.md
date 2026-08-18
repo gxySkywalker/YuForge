@@ -277,7 +277,6 @@ git push origin v1.1.0
 - [取消与打断机制](docs/cancellation-and-interruption.md)
 - [MCP Core](docs/phase-10-mcp-core.md) / [MCP Advanced](docs/phase-11-mcp-advanced.md)
 - [CLI 渲染与交互工程报告](docs/cli-rendering-engineering-report.md)
-- [简历项目描述](docs/resume-yuforge-project.md)
 
 ## License
 
